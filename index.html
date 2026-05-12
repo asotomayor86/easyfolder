@@ -1665,8 +1665,7 @@
       var yH   = Math.max(0.01, yHi - yLo);
       var yCtr = (yLo + yHi) / 2;
 
-      // Ajustar X de la capa A para tocar superficie del cilindro
-      var xOff = (layerIdx === 0) ? (1.0 + Math.sqrt(Math.max(0, cylRadius*cylRadius - z*z))) : 2.2;
+      var xOff = 2.2; // mismo punto de inicio para todas las capas
 
       var stripW = 1.0;
       var stripGeo = new THREE.BoxGeometry(stripW, yH, 0.04);
@@ -1708,8 +1707,7 @@
       var caGeo = new THREE.BoxGeometry(1.0, plegY, 0.04);
       var caMat = new THREE.MeshPhongMaterial({ color: LAYER_COLORS[7], transparent: true, opacity: 0.8 });
       var caStrip = new THREE.Mesh(caGeo, caMat);
-      caStrip.position.set(1.0 + Math.sqrt(Math.max(0, cylRadius*cylRadius - zCA*zCA)) + 0.5,
-                           (STRIP_H - plegY/2), zCA);
+      caStrip.position.set(2.7, (STRIP_H - plegY/2), zCA); // mismo X que el resto (xOff=2.2 + stripW/2)
       scene.add(caStrip);
     }
 
