@@ -1,0 +1,1880 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>easyFold</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- T-44: r184/build/three.min.js es ESM en jsDelivr — usar r128 de cdnjs (UMD global confirmado) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <style>
+    /* T-23: Animación CSS del panel inline */
+    .panel-grid {
+      display: grid;
+      transition: grid-template-rows 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .panel-grid.closed { grid-template-rows: 0fr; }
+    .panel-grid.open   { grid-template-rows: 1fr; }
+    .panel-inner       { overflow: hidden; }
+    .panel-instant     { transition: none !important; }
+
+    /* Números de tabla alineados */
+    .tabular { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+  <!-- CABECERA -->
+  <header class="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-10">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-800 leading-none">easyFold</h1>
+        <p class="text-xs text-slate-500 mt-0.5">Calculador de combinaciones de plegado — uso interno</p>
+      </div>
+      <button id="btn-config"
+        class="p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+        title="Configuración">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round"
+            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- CONTENIDO PRINCIPAL -->
+  <main id="main" class="max-w-7xl mx-auto px-4 py-8 space-y-6">
+
+    <!-- SECCIÓN FORMULARIO -->
+    <section id="section-form" class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+      <!-- Renderizado por renderForm() -->
+    </section>
+
+    <!-- SECCIÓN RESULTADOS -->
+    <section id="section-results" class="hidden space-y-4">
+      <!-- Renderizado por render() -->
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="text-center text-xs text-slate-400 py-8">
+    easyFold — uso interno — cálculo ejecutado en cliente
+  </footer>
+
+  <!-- MODAL DE CONFIGURACIÓN -->
+  <div id="modal-config" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div id="modal-overlay" class="absolute inset-0" style="background:rgba(15,23,42,0.45)"></div>
+    <div class="relative bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6 z-10">
+      <!-- Renderizado por renderConfigModal() -->
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- LÓGICA — funciones puras, sin DOM                            -->
+  <!-- ============================================================ -->
+  <script>
+
+  /* T-03: Constantes */
+
+  var QUALITY_LEVELS = [
+    { key: 'excelente', label: 'Excelente',  short: 'E', min: 0.90, color: '#16a34a', bg: '#dcfce7' },
+    { key: 'muy_bueno', label: 'Muy bueno',  short: 'M', min: 0.75, color: '#65a30d', bg: '#f7fee7' },
+    { key: 'bueno',     label: 'Bueno',      short: 'B', min: 0.55, color: '#ca8a04', bg: '#fefce8' },
+    { key: 'regular',   label: 'Regular',    short: 'R', min: 0.35, color: '#ea580c', bg: '#fff7ed' },
+    { key: 'deficiente',label: 'Deficiente', short: 'D', min: 0.00, color: '#dc2626', bg: '#fef2f2' },
+  ];
+
+  var LAYER_COLORS = [
+    0x3b82f6, // a — azul
+    0xf97316, // b — naranja
+    0x22c55e, // c — verde
+    0xa855f7, // d — violeta
+    0xef4444, // e — rojo
+    0x14b8a6, // f — teal
+    0xeab308, // g — amarillo
+    0xf43f5e, // CA — rose
+  ];
+
+  // Colores como strings CSS para SVG y DOM
+  var LAYER_CSS = LAYER_COLORS.slice(0, 7).map(function (h) {
+    return '#' + h.toString(16).padStart(6, '0');
+  });
+  LAYER_CSS.push('#f43f5e'); // CA
+
+  var DEFAULT_CONFIG = {
+    plegadoCinta:       5,
+    anchoCinta:         5,
+    galgasCinta:        80,
+    distanciaSeguridad: 1,
+  };
+
+  /* T-04: Validación */
+
+  function validateInputs(cP, aR) {
+    if (!isFinite(cP) || !isFinite(aR)) return { ok: false, error: 'cP y aR deben ser números.' };
+    if (cP !== Math.floor(cP))          return { ok: false, error: 'cP debe ser un número entero.' };
+    if (aR !== Math.floor(aR))          return { ok: false, error: 'aR debe ser un número entero.' };
+    if (aR <= 0)                        return { ok: false, error: 'aR debe ser mayor que 0.' };
+    if (cP <= 0)                        return { ok: false, error: 'cP debe ser mayor que 0.' };
+    return { ok: true };
+  }
+
+  /* T-05: Algoritmo de backtracking */
+
+  function calculateCombinations(cP, aR) {
+    var results = [];
+    var aR2 = aR * 2;
+    var R2  = (cP - aR) * 2;
+    if (R2 < 0) return results;
+
+    var current = [0, 0, 0, 0, 0, 0]; // posiciones b..g en semi-unidades
+
+    function upperBound(pos) {
+      if (pos === 1) return current[0]; // c ≤ b
+      if (pos === 3) return current[2]; // e ≤ d
+      if (pos === 5) return current[4]; // g ≤ f
+      return aR2;
+    }
+
+    function backtrack(pos, remaining) {
+      // Continuidad: si la variable anterior es 0, el resto deben ser 0.
+      // T-45: usar current[k] solo para k < pos (fijados en este camino);
+      // forzar 0 para k >= pos (valores obsoletos de rutas anteriores).
+      if (pos > 0 && current[pos - 1] === 0) {
+        if (remaining === 0) {
+          results.push({
+            a: aR,
+            b: current[0] / 2,
+            c: pos > 1 ? current[1] / 2 : 0,
+            d: pos > 2 ? current[2] / 2 : 0,
+            e: pos > 3 ? current[3] / 2 : 0,
+            f: pos > 4 ? current[4] / 2 : 0,
+            g: 0,
+          });
+        }
+        return;
+      }
+
+      // Regla simetría D: si entramos en pos=2 (d) y c≠b, solo d=0 es válido
+      if (pos === 2 && current[1] !== current[0]) {
+        if (remaining === 0) {
+          results.push({ a: aR, b: current[0]/2, c: current[1]/2, d: 0, e: 0, f: 0, g: 0 });
+        }
+        return;
+      }
+
+      // Regla simetría F: si entramos en pos=4 (f) y e≠d, solo f=0 es válido
+      if (pos === 4 && current[3] !== current[2]) {
+        if (remaining === 0) {
+          results.push({ a: aR, b: current[0]/2, c: current[1]/2, d: current[2]/2,
+                         e: current[3]/2, f: 0, g: 0 });
+        }
+        return;
+      }
+
+      if (pos === 6) {
+        if (remaining === 0) {
+          results.push({ a: aR, b: current[0]/2, c: current[1]/2, d: current[2]/2,
+                         e: current[3]/2, f: current[4]/2, g: current[5]/2 });
+        }
+        return;
+      }
+
+      var maxVal    = Math.min(upperBound(pos), remaining);
+      var posLeft   = 5 - pos; // posiciones que quedan después de esta
+      var minNonZero = Math.max(1, remaining - posLeft * aR2);
+
+      // Explorar valores desde minNonZero hasta maxVal
+      for (var val = maxVal; val >= minNonZero; val--) {
+        current[pos] = val;
+        backtrack(pos + 1, remaining - val);
+      }
+
+      // Explorar val = 0 solo si remaining = 0
+      if (remaining === 0) {
+        current[pos] = 0;
+        backtrack(pos + 1, 0);
+      }
+    }
+
+    backtrack(0, R2);
+    return results;
+  }
+
+  /* T-07: Extents Y físicos de las capas */
+
+  function computeLayerExtents(vars) {
+    var keys   = ['a','b','c','d','e','f','g'];
+    var active = [];
+    for (var i = 0; i < 7; i++) {
+      if (vars[keys[i]] > 0 || i === 0) active.push(i);
+    }
+    var numLayers = active.length;
+    var extents   = [];
+    var curY      = vars.a; // aR
+
+    for (var li = 0; li < numLayers; li++) {
+      var idx    = active[li];
+      var val    = vars[keys[idx]];
+      var entryY = curY;
+      var exitY;
+      if (idx % 2 === 0) {
+        exitY = curY - val; // capa par: baja ↓
+      } else {
+        exitY = curY + val; // capa impar: sube ↑
+      }
+      extents.push({ lo: Math.min(entryY, exitY), hi: Math.max(entryY, exitY), idx: idx });
+      curY = exitY;
+    }
+    return extents;
+  }
+
+  /* T-08: Zonas de gramaje */
+
+  function computeGaugeZones(vars, aR, config) {
+    var extents = computeLayerExtents(vars);
+    var ranges  = extents.map(function (e) { return [e.lo, e.hi]; });
+
+    var bpSet = {};
+    bpSet[0]  = true;
+    bpSet[aR] = true;
+    extents.forEach(function (e) { bpSet[e.lo] = true; bpSet[e.hi] = true; });
+
+    if (config && config.plegadoCinta > 0) {
+      bpSet[aR - config.plegadoCinta] = true;
+    }
+    if (config && config.anchoCinta > 0) {
+      var bpCinta = aR - config.anchoCinta / 2;
+      if (bpCinta > 0) bpSet[bpCinta] = true;
+    }
+
+    var bp = Object.keys(bpSet).map(Number).sort(function (a, b) { return a - b; });
+
+    var zones    = [];
+    var maxCount = 0;
+    for (var i = 0; i < bp.length - 1; i++) {
+      var yBot = bp[i];
+      var yTop = bp[i + 1];
+      var yMid = (yBot + yTop) / 2;
+      var count = 0;
+      extents.forEach(function (e) {
+        if (e.lo <= yMid && yMid <= e.hi) count++;
+      });
+      zones.push({ yBot: yBot, yTop: yTop, count: count });
+      if (count > maxCount) maxCount = count;
+    }
+
+    return { zones: zones, maxCount: maxCount, ranges: ranges };
+  }
+
+  /* T-09: Gramaje efectivo y score */
+
+  function effectiveG(zona, galgas, aR, config) {
+    var gPC = (galgas > 0) ? galgas * 2 : 1;
+    var g   = zona.count * gPC;
+    var mid = (zona.yBot + zona.yTop) / 2;
+    var hasCinta = config && (config.plegadoCinta > 0 || config.anchoCinta > 0);
+    if (hasCinta && mid >= aR - config.plegadoCinta) {
+      g += gPC;
+    }
+    if (hasCinta && config.galgasCinta > 0 && mid >= aR - config.anchoCinta / 2) {
+      g += config.galgasCinta * 2;
+    }
+    return g;
+  }
+
+  function computeRollScore(vars, aR, galgas, config) {
+    var gz      = computeGaugeZones(vars, aR, config);
+    var zones   = gz.zones;
+    if (zones.length === 0) return 0;
+
+    var gVals = zones.map(function (z) { return effectiveG(z, galgas, aR, config); });
+    var gMax  = Math.max.apply(null, gVals);
+    if (gMax === 0) return 0;
+
+    // Uniformidad
+    var D = 0;
+    for (var i = 0; i < zones.length; i++) {
+      var w = (zones[i].yTop - zones[i].yBot) / aR;
+      var t = gVals[i] / gMax;
+      D += w * (1 - t) * (1 - t);
+    }
+    var U = 1 - D;
+
+    // Solidez central
+    var centerY = aR / 2;
+    var C = 0;
+    for (var j = 0; j < zones.length; j++) {
+      if (zones[j].yBot <= centerY && centerY <= zones[j].yTop) {
+        C = gVals[j] / gMax;
+        break;
+      }
+    }
+
+    var score = U * 0.85 + C * 0.15;
+    return Math.max(0, Math.min(1, score));
+  }
+
+  function getQualityLevel(score) {
+    for (var i = 0; i < QUALITY_LEVELS.length; i++) {
+      if (score >= QUALITY_LEVELS[i].min) return QUALITY_LEVELS[i];
+    }
+    return QUALITY_LEVELS[QUALITY_LEVELS.length - 1];
+  }
+
+  /* T-10: Enriquecimiento de fila */
+
+  function enrichCombination(combo, aR, galgas, config) {
+    var score  = computeRollScore(combo, aR, galgas, config);
+    var gz     = computeGaugeZones(combo, aR, config);
+    var cP     = combo.a + combo.b + combo.c + combo.d + combo.e + combo.f + combo.g;
+    return Object.assign({}, combo, {
+      cP:            cP,
+      aR:            aR,
+      score:         score,
+      maxGaugeLayers: gz.maxCount,
+    });
+  }
+
+  /* T-11: CSV */
+
+  function combinationsToCSV(combinations) {
+    var lines = ['cP,aR,a,b,c,d,e,f,g'];
+    combinations.forEach(function (r) {
+      lines.push([r.cP, r.aR, r.a, r.b, r.c, r.d, r.e, r.f, r.g].join(','));
+    });
+    return lines.join('\n');
+  }
+
+  function downloadCSV(cP, aR, combinations) {
+    var csv  = combinationsToCSV(combinations);
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url  = URL.createObjectURL(blob);
+    var a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'easyfold_cP' + cP + '_aR' + aR + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  /* T-12: Colores de gramaje y capas */
+
+  function gaugeColor(t) {
+    var r, g, b;
+    t = Math.max(0, Math.min(1, t));
+    if (t <= 0.5) {
+      var s = t * 2;
+      r = 0.86 + (0.57 - 0.86) * s;
+      g = 0.15 + (0.25 - 0.15) * s;
+      b = 0.15 + (0.05 - 0.15) * s;
+    } else {
+      var s = (t - 0.5) * 2;
+      r = 0.57 + (0.13 - 0.57) * s;
+      g = 0.25 + (0.77 - 0.25) * s;
+      b = 0.05 + (0.37 - 0.05) * s;
+    }
+    return 'rgb(' + Math.round(r*255) + ',' + Math.round(g*255) + ',' + Math.round(b*255) + ')';
+  }
+
+  function lighten(hexInt, t) {
+    var r = (hexInt >> 16) & 0xff;
+    var g = (hexInt >> 8)  & 0xff;
+    var b =  hexInt        & 0xff;
+    r = Math.round(r + (255 - r) * t);
+    g = Math.round(g + (255 - g) * t);
+    b = Math.round(b + (255 - b) * t);
+    return (r << 16) | (g << 8) | b;
+  }
+
+  function hexIntToCss(hexInt) {
+    return '#' + hexInt.toString(16).padStart(6, '0');
+  }
+
+  /* T-15: Clave de fila */
+
+  function rowKey(combo) {
+    return combo.b + '-' + combo.c + '-' + combo.d + '-' + combo.e + '-' + combo.f + '-' + combo.g;
+  }
+
+  /* T-25: Orden visual de capas */
+
+  function getVisualOrder(numLayers) {
+    var orders = [
+      [],
+      [0],
+      [0, 1],
+      [0, 2, 1],
+      [0, 3, 2, 1],
+      [0, 3, 4, 2, 1],
+      [0, 3, 4, 5, 2, 1],
+      [0, 3, 4, 6, 5, 2, 1],
+    ];
+    return orders[numLayers] || orders[7];
+  }
+
+  /* T-22: Rango de páginas */
+
+  function getPageRange(page, totalPages) {
+    if (totalPages <= 7) {
+      var pages = [];
+      for (var i = 1; i <= totalPages; i++) pages.push(i);
+      return pages;
+    }
+    if (page <= 4) {
+      return [1, 2, 3, 4, 5, '…', totalPages];
+    }
+    if (page >= totalPages - 3) {
+      return [1, '…', totalPages-4, totalPages-3, totalPages-2, totalPages-1, totalPages];
+    }
+    return [1, '…', page-1, page, page+1, '…', totalPages];
+  }
+
+  </script>
+
+  <!-- ============================================================ -->
+  <!-- ESTADO                                                        -->
+  <!-- ============================================================ -->
+  <script>
+
+  /* T-13: Objeto global APP */
+
+  var APP = {
+    form: { cP: '', aR: '', galgas: '', cintaAutocierre: 'sin' },
+    config: Object.assign({}, DEFAULT_CONFIG),
+    configOpen: false,
+
+    results: null,
+    qualityFilter: null,
+    gaugeLayerFilter: null,
+
+    hoveredKey: null,
+    lockedKey: null,
+    lockedCombination: null,
+    instantClose: false,
+
+    loading: false,
+    csvLoading: false,
+    error: null,
+
+    // Para el ciclo de vida de los viewers 3D
+    viewers: {},
+  };
+
+  function loadConfig() {
+    try {
+      var stored = localStorage.getItem('easyfold_config');
+      if (stored) {
+        var parsed = JSON.parse(stored);
+        APP.config = Object.assign({}, DEFAULT_CONFIG, parsed);
+      }
+    } catch (e) { /* ignorar */ }
+  }
+
+  function saveConfig(cfg) {
+    APP.config = Object.assign({}, cfg);
+    try { localStorage.setItem('easyfold_config', JSON.stringify(cfg)); } catch (e) {}
+  }
+
+  /* T-14: Motor de cálculo del cliente */
+
+  function runCalculation(page) {
+    var cP = parseInt(APP.form.cP, 10);
+    var aR = parseInt(APP.form.aR, 10);
+
+    var v = validateInputs(cP, aR);
+    if (!v.ok) {
+      APP.error = v.error;
+      render();
+      return;
+    }
+    APP.error   = null;
+    APP.loading = true;
+    render();
+
+    // Diferir para que el spinner se pinte antes de que el cálculo bloquee
+    setTimeout(function () {
+      var galgas  = parseInt(APP.form.galgas, 10) || 0;
+      var config  = null;
+      if (APP.form.cintaAutocierre === 'con') {
+        config = APP.config;
+      }
+
+      var combos = calculateCombinations(cP, aR);
+      var enriched = combos.map(function (c) {
+        return enrichCombination(c, aR, galgas, config);
+      });
+      enriched.sort(function (a, b) { return b.score - a.score; });
+
+      // availableGaugeLayers: sobre subconjunto filtrado por calidad
+      var forGauge = APP.qualityFilter
+        ? enriched.filter(function (r) { return getQualityLevel(r.score).key === APP.qualityFilter; })
+        : enriched;
+      var glSet = {};
+      forGauge.forEach(function (r) { glSet[r.maxGaugeLayers] = true; });
+      var availableGaugeLayers = Object.keys(glSet).map(Number).sort(function (a,b){return a-b;});
+
+      // Aplicar filtros
+      var filtered = enriched;
+      if (APP.qualityFilter) {
+        filtered = filtered.filter(function (r) {
+          return getQualityLevel(r.score).key === APP.qualityFilter;
+        });
+      }
+      if (APP.gaugeLayerFilter !== null) {
+        filtered = filtered.filter(function (r) {
+          return r.maxGaugeLayers === APP.gaugeLayerFilter;
+        });
+      }
+
+      var pageSize   = APP.pageSize || 50;
+      var safePage   = Math.max(1, page || 1);
+      var totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+      safePage       = Math.min(safePage, totalPages);
+      var start      = (safePage - 1) * pageSize;
+      var pageCombos = filtered.slice(start, start + pageSize);
+
+      APP.results = {
+        totalCount:          filtered.length,
+        page:                safePage,
+        pageSize:            pageSize,
+        totalPages:          totalPages,
+        combinations:        pageCombos,
+        availableGaugeLayers: availableGaugeLayers,
+        cP:                  cP,
+        aR:                  aR,
+        galgas:              galgas,
+        config:              config,
+        allEnriched:         enriched, // guardamos todo para CSV
+      };
+      APP.loading = false;
+      APP.lockedKey         = null;
+      APP.lockedCombination = null;
+      render();
+    }, 0);
+  }
+
+  /* T-31: Dispose de viewers 3D */
+
+  function disposeViewer(id) {
+    var v = APP.viewers[id];
+    if (!v) return;
+    if (v.animId)    cancelAnimationFrame(v.animId);
+    if (v.renderer)  { v.renderer.dispose(); }
+    if (v.observer)  v.observer.disconnect();
+    delete APP.viewers[id];
+  }
+
+  function disposeAllViewers() {
+    Object.keys(APP.viewers).forEach(disposeViewer);
+  }
+
+  </script>
+
+  <!-- ============================================================ -->
+  <!-- RENDER                                                        -->
+  <!-- ============================================================ -->
+  <script>
+
+  /* ---- helpers ---- */
+
+  function esc(str) {
+    return String(str)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function fmtNum(n) {
+    return n.toLocaleString('es-ES');
+  }
+
+  function spinnerSVG(cls) {
+    return '<svg class="animate-spin ' + (cls||'w-4 h-4') + '" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">'
+      + '<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>'
+      + '<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>';
+  }
+
+  /* T-16: Formulario */
+
+  function renderForm() {
+    var f    = APP.form;
+    var html = '<h2 class="text-lg font-semibold text-slate-700 mb-4">Parámetros de cálculo</h2>'
+      + '<form id="calc-form" class="space-y-4">'
+      + '<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">'
+
+      // cP
+      + '<div>'
+      + '<label class="block text-sm font-medium text-slate-700 mb-1">cP <span class="text-slate-400 font-normal">— cantidad a plegar</span></label>'
+      + '<input id="inp-cP" type="number" min="1" step="1" value="' + esc(f.cP) + '" placeholder="ej. 65"'
+      + ' class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
+      + '<p class="text-xs text-slate-400 mt-1">Suma total que deben alcanzar las 7 variables.</p>'
+      + '</div>'
+
+      // aR
+      + '<div>'
+      + '<label class="block text-sm font-medium text-slate-700 mb-1">aR <span class="text-slate-400 font-normal">— altura de rollo</span></label>'
+      + '<input id="inp-aR" type="number" min="1" step="1" value="' + esc(f.aR) + '" placeholder="ej. 17"'
+      + ' class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
+      + '<p class="text-xs text-slate-400 mt-1">Valor fijo de <code>a</code> y cota máxima de todas las variables.</p>'
+      + '</div>'
+
+      // Material (galgas + cinta)
+      + '</div>'
+      + '<div class="border border-slate-200 rounded-lg p-4 space-y-3">'
+      + '<p class="text-sm font-medium text-slate-600">Material</p>'
+      + '<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">'
+
+      // galgas
+      + '<div>'
+      + '<label class="block text-sm font-medium text-slate-700 mb-1">Grosor de lámina (galgas)</label>'
+      + '<input id="inp-galgas" type="number" min="1" step="1" value="' + esc(f.galgas) + '" placeholder="µm"'
+      + ' class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
+      + '<p class="text-xs text-slate-400 mt-1">1 galga = 1 µm. Solo informativo.</p>'
+      + '</div>'
+
+      // cinta autocierre
+      + '<div>'
+      + '<label class="block text-sm font-medium text-slate-700 mb-1">Cinta Autocierre</label>'
+      + '<select id="inp-cinta" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">'
+      + '<option value="sin"' + (f.cintaAutocierre === 'sin' ? ' selected' : '') + '>Sin Cinta Autocierre</option>'
+      + '<option value="con"' + (f.cintaAutocierre === 'con' ? ' selected' : '') + '>Con Cinta Autocierre</option>'
+      + '</select>'
+      + (f.cintaAutocierre === 'con'
+        ? '<p class="text-xs text-blue-600 mt-1">Los parámetros de cinta provienen de la configuración global (⚙).</p>'
+        : '')
+      + '</div>'
+
+      + '</div></div>' // end material grid + border
+
+      // Error
+      + (APP.error
+        ? '<div class="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">' + esc(APP.error) + '</div>'
+        : '')
+
+      // Botón
+      + '<div>'
+      + '<button type="submit" id="btn-calc"'
+      + (APP.loading ? ' disabled' : '')
+      + ' class="inline-flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white px-5 py-2.5 text-sm font-medium transition-colors">'
+      + (APP.loading ? spinnerSVG('w-4 h-4 text-white') + ' Calculando…' : 'Calcular combinaciones')
+      + '</button>'
+      + '</div>'
+
+      + '</form>';
+
+    document.getElementById('section-form').innerHTML = html;
+
+    // Bind eventos
+    document.getElementById('calc-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      APP.form.cP   = document.getElementById('inp-cP').value.trim();
+      APP.form.aR   = document.getElementById('inp-aR').value.trim();
+      APP.form.galgas = document.getElementById('inp-galgas').value.trim();
+      APP.form.cintaAutocierre = document.getElementById('inp-cinta').value;
+      APP.qualityFilter    = null;
+      APP.gaugeLayerFilter = null;
+      runCalculation(1);
+    });
+    document.getElementById('inp-cP').addEventListener('input', function () {
+      APP.form.cP = this.value;
+    });
+    document.getElementById('inp-aR').addEventListener('input', function () {
+      APP.form.aR = this.value;
+    });
+    document.getElementById('inp-galgas').addEventListener('input', function () {
+      APP.form.galgas = this.value;
+    });
+    document.getElementById('inp-cinta').addEventListener('change', function () {
+      APP.form.cintaAutocierre = this.value;
+      renderForm();
+    });
+  }
+
+  /* T-17: Modal de configuración */
+
+  function renderConfigModal() {
+    var modal = document.getElementById('modal-config');
+    if (!APP.configOpen) {
+      modal.classList.add('hidden');
+      return;
+    }
+    modal.classList.remove('hidden');
+    var c = APP.config;
+    var panel = modal.querySelector('.relative');
+    panel.innerHTML = '<h2 class="text-lg font-semibold text-slate-700 mb-4">Configuración</h2>'
+      + '<form id="config-form" class="space-y-4">'
+
+      + '<div class="border border-slate-200 rounded-lg p-4 space-y-3">'
+      + '<p class="text-sm font-medium text-slate-600">Cinta Autocierre</p>'
+
+      + '<div>'
+      + '<label class="block text-xs font-medium text-slate-600 mb-1">Plegado de cinta</label>'
+      + '<input type="number" id="cfg-plegado" min="0" step="1" value="' + c.plegadoCinta + '"'
+      + ' class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
+      + '</div>'
+
+      + '<div>'
+      + '<label class="block text-xs font-medium text-slate-600 mb-1">Ancho de cinta</label>'
+      + '<input type="number" id="cfg-ancho" min="0" step="1" value="' + c.anchoCinta + '"'
+      + ' class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
+      + '</div>'
+
+      + '<div>'
+      + '<label class="block text-xs font-medium text-slate-600 mb-1">Galga de cinta (µm)</label>'
+      + '<input type="number" id="cfg-galga" min="0" step="1" value="' + c.galgasCinta + '"'
+      + ' class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
+      + '</div>'
+      + '</div>'
+
+      + '<div class="border border-slate-200 rounded-lg p-4 space-y-3">'
+      + '<p class="text-sm font-medium text-slate-600">General</p>'
+      + '<div>'
+      + '<label class="block text-xs font-medium text-slate-600 mb-1">Distancia de seguridad</label>'
+      + '<input type="number" id="cfg-dist" min="0" step="0.5" value="' + c.distanciaSeguridad + '"'
+      + ' class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
+      + '</div>'
+      + '</div>'
+
+      + '<div class="flex justify-end gap-3 pt-2">'
+      + '<button type="button" id="cfg-cancel"'
+      + ' class="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition-colors">Cancelar</button>'
+      + '<button type="submit"'
+      + ' class="rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-sm font-medium transition-colors">Guardar</button>'
+      + '</div>'
+      + '</form>';
+
+    document.getElementById('cfg-cancel').addEventListener('click', function () {
+      APP.configOpen = false;
+      renderConfigModal();
+    });
+    document.getElementById('modal-overlay').addEventListener('click', function () {
+      APP.configOpen = false;
+      renderConfigModal();
+    });
+    document.getElementById('config-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      saveConfig({
+        plegadoCinta:       parseInt(document.getElementById('cfg-plegado').value, 10) || 0,
+        anchoCinta:         parseInt(document.getElementById('cfg-ancho').value, 10)   || 0,
+        galgasCinta:        parseInt(document.getElementById('cfg-galga').value, 10)   || 0,
+        distanciaSeguridad: parseFloat(document.getElementById('cfg-dist').value)      || 0,
+      });
+      APP.configOpen = false;
+      renderConfigModal();
+    });
+  }
+
+  /* T-18: Barra de resumen + CSV */
+
+  function renderSummaryBar() {
+    var R = APP.results;
+    var html = '<div class="flex flex-wrap items-center justify-between gap-3">'
+      + '<p class="text-sm text-slate-700">'
+      + (R.totalCount === 0
+        ? 'No se encontraron combinaciones válidas para estos parámetros.'
+        : '<span class="font-semibold">' + fmtNum(R.totalCount) + '</span> combinaciones válidas para cP=' + R.cP + ', aR=' + R.aR)
+      + '</p>'
+
+      + '<button id="btn-csv" '
+      + (R.totalCount === 0 || APP.csvLoading ? 'disabled ' : '')
+      + 'class="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors">'
+      + (APP.csvLoading
+        ? spinnerSVG('w-4 h-4') + ' Generando CSV…'
+        : '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg> Descargar CSV')
+      + '</button>'
+      + '</div>';
+    return html;
+  }
+
+  /* T-19: Chips de calidad */
+
+  function renderQualityChips() {
+    var R = APP.results;
+    if (!R || R.totalCount === 0) return '';
+
+    // Detectar qué niveles están presentes
+    var present = {};
+    R.combinations.forEach(function (r) { present[getQualityLevel(r.score).key] = true; });
+    // También revisar allEnriched para no depender solo de la página
+    if (R.allEnriched) {
+      R.allEnriched.forEach(function (r) { present[getQualityLevel(r.score).key] = true; });
+    }
+
+    var html = '<div class="flex flex-wrap gap-2 items-center">';
+    // Chip "Todos"
+    var allActive = APP.qualityFilter === null;
+    html += '<button data-qfilter="__all__" class="rounded-full px-3 py-1 text-xs font-medium border transition-colors cursor-pointer '
+      + (allActive ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-300 hover:border-slate-500')
+      + '">Todos</button>';
+
+    QUALITY_LEVELS.forEach(function (ql) {
+      if (!present[ql.key]) return;
+      var active = APP.qualityFilter === ql.key;
+      var style  = active
+        ? 'background:' + ql.bg + ';color:' + ql.color + ';border-color:' + ql.color
+        : 'background:#f8fafc;color:' + ql.color + ';border-color:#e2e8f0';
+      html += '<button data-qfilter="' + ql.key + '" style="' + style + '"'
+        + ' class="rounded-full px-3 py-1 text-xs font-medium border transition-colors cursor-pointer">'
+        + ql.label + '</button>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  /* T-20: Chips de galga máxima */
+
+  function renderGaugeChips() {
+    var R = APP.results;
+    if (!R || R.availableGaugeLayers.length <= 1) return '';
+    var galgas = R.galgas || 0;
+
+    var html = '<div class="flex flex-wrap gap-2 items-center">';
+    var allActive = APP.gaugeLayerFilter === null;
+    html += '<button data-gfilter="__all__" class="rounded-full px-3 py-1 text-xs font-medium border transition-colors cursor-pointer '
+      + (allActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-indigo-400')
+      + '">Todos</button>';
+
+    R.availableGaugeLayers.forEach(function (n) {
+      var active = APP.gaugeLayerFilter === n;
+      var label  = galgas > 0 ? (n + ' × ' + galgas + ' × 2 g') : (n + ' cap.');
+      html += '<button data-gfilter="' + n + '" class="rounded-full px-3 py-1 text-xs font-medium border transition-colors cursor-pointer '
+        + (active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-indigo-400')
+        + '">' + label + '</button>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  /* T-21: Tabla de resultados */
+
+  function renderTable() {
+    var R = APP.results;
+    if (!R || R.combinations.length === 0) return '';
+
+    var pageStart = (R.page - 1) * R.pageSize;
+
+    var cols = ['#','cP','aR','a','b','c','d','e','f','g','Cal.'];
+    var widths = ['w-[5%]','w-[7%]','w-[7%]','w-[6%]','w-[6%]','w-[6%]','w-[6%]','w-[6%]','w-[6%]','w-[6%]','w-[23%]'];
+
+    var html = '<div class="overflow-x-auto"><table class="w-full table-fixed text-xs">';
+
+    // Encabezado
+    html += '<thead><tr class="bg-slate-50 text-slate-500 uppercase tracking-wider text-left">';
+    cols.forEach(function (col, i) {
+      var extra = (col === 'a') ? ' class="' + widths[i] + ' px-2 py-2 font-semibold text-blue-700 bg-blue-50"'
+                                : ' class="' + widths[i] + ' px-2 py-2 font-semibold"';
+      html += '<th' + extra + '>' + col + '</th>';
+    });
+    html += '</tr></thead>';
+
+    // Cuerpo
+    html += '<tbody class="divide-y divide-slate-100">';
+    R.combinations.forEach(function (row, ri) {
+      var key      = rowKey(row);
+      var isLocked = APP.lockedKey === key;
+      var rowNum   = pageStart + ri + 1;
+      var ql       = getQualityLevel(row.score);
+
+      var trClass = isLocked
+        ? 'bg-blue-800 text-white ring-1 ring-inset ring-blue-900 cursor-pointer'
+        : 'hover:bg-blue-50 hover:border-blue-200 cursor-pointer';
+
+      html += '<tr data-key="' + key + '" class="' + trClass + ' transition-colors">';
+
+      // # (número de fila)
+      html += '<td class="px-2 py-2 tabular ' + (isLocked ? 'text-white' : 'text-slate-400') + '">'
+        + (isLocked ? '📌' : rowNum) + '</td>';
+
+      // cP, aR
+      ['cP','aR'].forEach(function (f) {
+        html += '<td class="px-2 py-2 tabular">' + row[f] + '</td>';
+      });
+
+      // a (fondo azul si no locked)
+      html += '<td class="px-2 py-2 tabular ' + (isLocked ? '' : 'bg-blue-50 text-blue-700') + '">' + row.a + '</td>';
+
+      // b..g
+      ['b','c','d','e','f','g'].forEach(function (f) {
+        var val = row[f];
+        var cls = (val === 0)
+          ? (isLocked ? 'text-blue-300' : 'text-slate-200')
+          : '';
+        html += '<td class="px-2 py-2 tabular ' + cls + '">' + val + '</td>';
+      });
+
+      // Cal.
+      var badgeStyle = 'background:' + ql.bg + ';color:' + ql.color;
+      html += '<td class="px-2 py-2">'
+        + '<span class="inline-flex items-center gap-1">'
+        + '<span style="' + badgeStyle + '" class="rounded px-1.5 py-0.5 font-medium">'
+        + '<span class="sm:hidden">' + ql.short + '</span>'
+        + '<span class="hidden sm:inline">' + ql.label + '</span>'
+        + '</span>'
+        + '<span class="font-mono font-bold tabular ml-1 ' + (isLocked ? 'text-white' : 'text-slate-700') + '">'
+        + Math.round(row.score * 100)
+        + '</span>'
+        + '</span></td>';
+
+      html += '</tr>';
+
+      // Panel inline si está bloqueado
+      if (isLocked) {
+        html += '<tr data-panel-key="' + key + '">'
+          + '<td colspan="11" class="p-0">'
+          + '<div id="panel-grid-' + key + '" class="panel-grid closed">'
+          + '<div class="panel-inner">'
+          + '<div id="panel-content-' + key + '" class="p-4">'
+          + buildInlinePanelHTML(row, R)
+          + '</div>'
+          + '</div>'
+          + '</div>'
+          + '</td></tr>';
+      }
+    });
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  /* T-22: Paginación */
+
+  function renderPagination() {
+    var R = APP.results;
+    if (!R || R.totalPages <= 1) return '';
+
+    var start = (R.page - 1) * R.pageSize + 1;
+    var end   = Math.min(R.page * R.pageSize, R.totalCount);
+    var dis   = APP.loading ? ' disabled' : '';
+
+    var html = '<div class="flex flex-wrap items-center justify-between gap-3 text-sm">';
+
+    // Info + selector pageSize
+    html += '<div class="flex items-center gap-3">'
+      + '<span class="text-slate-500">Mostrando ' + fmtNum(start) + '–' + fmtNum(end) + ' de ' + fmtNum(R.totalCount) + '</span>'
+      + '<select id="sel-pagesize"' + dis + ' class="rounded border border-slate-300 px-2 py-1 text-xs">';
+    [25, 50, 100, 200].forEach(function (n) {
+      html += '<option value="' + n + '"' + (R.pageSize === n ? ' selected' : '') + '>' + n + ' / pág.</option>';
+    });
+    html += '</select></div>';
+
+    // Botones de página
+    var range = getPageRange(R.page, R.totalPages);
+    html += '<div class="flex items-center gap-1">';
+    html += pageBtn('«', 1, R.page === 1 || APP.loading);
+    html += pageBtn('‹', R.page - 1, R.page === 1 || APP.loading);
+    range.forEach(function (p) {
+      if (p === '…') {
+        html += '<span class="px-2 text-slate-400">…</span>';
+      } else {
+        var active = p === R.page;
+        html += '<button data-page="' + p + '"' + (APP.loading ? ' disabled' : '')
+          + ' class="w-8 h-8 rounded text-xs font-medium transition-colors '
+          + (active ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-600')
+          + '">' + p + '</button>';
+      }
+    });
+    html += pageBtn('›', R.page + 1, R.page === R.totalPages || APP.loading);
+    html += pageBtn('»', R.totalPages, R.page === R.totalPages || APP.loading);
+    html += '</div></div>';
+    return html;
+  }
+
+  function pageBtn(label, page, disabled) {
+    return '<button data-page="' + page + '"' + (disabled ? ' disabled' : '')
+      + ' class="w-8 h-8 rounded text-xs font-medium hover:bg-slate-100 disabled:opacity-40 text-slate-600 transition-colors">'
+      + label + '</button>';
+  }
+
+  /* T-24: Contenido del panel inline */
+
+  function buildInlinePanelHTML(row, R) {
+    var galgas = R ? (R.galgas || 0) : 0;
+    var cfg    = R ? R.config : null;
+    var aR     = row.aR;
+
+    return '<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">'
+      + '<div>'
+      + '<p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Sección transversal</p>'
+      + buildFoldDiagramSVG(row, aR, cfg)
+      + '</div>'
+      + '<div>'
+      + '<p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Análisis de gramaje</p>'
+      + buildGaugeTable(row, aR, galgas, cfg)
+      + '<div id="gauge-viewer-' + rowKey(row) + '" class="mt-3 rounded-lg overflow-hidden bg-slate-100" style="height:200px"></div>'
+      + '</div>'
+      + '<div>'
+      + '<p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Vista 3D del rollo</p>'
+      + '<div id="roll-viewer-' + rowKey(row) + '" class="rounded-lg overflow-hidden bg-slate-100" style="height:260px"></div>'
+      + '</div>'
+      + '</div>';
+  }
+
+  /* T-26: Diagrama SVG de sección transversal */
+
+  function buildFoldDiagramSVG(vars, aR, config) {
+    var BAR_W    = 36;
+    var GAP      = 7;
+    var PAD_LEFT = 28;
+    var PAD_RIGHT= 10;
+    var PAD_TOP  = 24;
+    var PAD_BOT  = 36;
+    var CHART_H  = 200;
+    var ARC_DEPTH= 9;
+
+    var scale      = CHART_H / aR;
+    var keys       = ['a','b','c','d','e','f','g'];
+    var hasCinta   = config && (config.plegadoCinta > 0 || config.anchoCinta > 0);
+    var cintaShift = hasCinta ? 1 : 0;
+    var extents    = computeLayerExtents(vars);
+    var numLayers  = extents.length;
+    var visualOrder= getVisualOrder(numLayers); // índices físicos
+
+    var numBars = numLayers + cintaShift;
+    var SVG_W   = PAD_LEFT + numBars * BAR_W + (numBars - 1) * GAP + PAD_RIGHT;
+    var SVG_H   = PAD_TOP + CHART_H + PAD_BOT;
+    var chartBottom = PAD_TOP + CHART_H;
+
+    function svgY(y) { return chartBottom - y * scale; }
+    function barX(col) { return PAD_LEFT + col * (BAR_W + GAP); }
+
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + SVG_W + ' ' + SVG_H + '"'
+      + ' class="w-full" style="max-height:260px">';
+
+    // Grid horizontal
+    [0.25, 0.5, 0.75, 1.0].forEach(function (pct) {
+      var y = svgY(aR * pct);
+      svg += '<line x1="' + PAD_LEFT + '" y1="' + y + '" x2="' + (SVG_W - PAD_RIGHT) + '" y2="' + y + '"'
+        + ' stroke="#e2e8f0" stroke-dasharray="3,3" stroke-width="1"/>';
+      svg += '<text x="' + (PAD_LEFT - 3) + '" y="' + (y + 4) + '" text-anchor="end"'
+        + ' font-size="8" fill="#94a3b8">' + (aR * pct) + '</text>';
+    });
+    // Etiqueta 0
+    svg += '<text x="' + (PAD_LEFT - 3) + '" y="' + (chartBottom + 4) + '" text-anchor="end"'
+      + ' font-size="8" fill="#94a3b8">0</text>';
+
+    // Cinta Autocierre (columna 0 si hasCinta)
+    if (hasCinta) {
+      var plegY = svgY(aR - config.plegadoCinta);
+      var topY  = svgY(aR);
+      var cx    = barX(0);
+      // Barra exterior rosa
+      svg += '<rect x="' + cx + '" y="' + topY + '" width="' + BAR_W + '" height="' + (plegY - topY) + '"'
+        + ' fill="#f43f5e" opacity="0.85" rx="2"/>';
+      // Barra interior más estrecha
+      if (config.anchoCinta > 0) {
+        var cinchaY = svgY(aR - config.anchoCinta / 2);
+        svg += '<rect x="' + (cx + BAR_W*0.25) + '" y="' + cinchaY + '" width="' + (BAR_W*0.5) + '"'
+          + ' height="' + (plegY - cinchaY) + '" fill="#fb7185" opacity="0.9" rx="1"/>';
+      }
+      // Etiqueta
+      svg += '<text x="' + (cx + BAR_W/2) + '" y="' + (chartBottom + 14) + '" text-anchor="middle"'
+        + ' font-size="9" fill="#f43f5e" font-weight="bold">CA</text>';
+    }
+
+    // Barras de capas en orden visual
+    visualOrder.forEach(function (layerIdx, colOffset) {
+      var ext = extents[layerIdx];
+      if (!ext) return;
+      var col  = colOffset + cintaShift;
+      var cx   = barX(col);
+      var yTop = svgY(ext.hi);
+      var yBot = svgY(ext.lo);
+      var h    = Math.max(1, yBot - yTop);
+      svg += '<rect x="' + cx + '" y="' + yTop + '" width="' + BAR_W + '" height="' + h + '"'
+        + ' fill="' + LAYER_CSS[layerIdx] + '" opacity="0.85" rx="2"/>';
+      svg += '<text x="' + (cx + BAR_W/2) + '" y="' + (chartBottom + 14) + '" text-anchor="middle"'
+        + ' font-size="9" fill="' + LAYER_CSS[layerIdx] + '" font-weight="bold">'
+        + keys[layerIdx] + '</text>';
+    });
+
+    // Path de lámina continua
+    // Reconstruir posiciones X de cada capa en orden físico (a=0, b=1, c=2...)
+    // El índice en visualOrder nos da la columna de cada layer
+    var layerCol = {}; // layerIdx → columna SVG
+    visualOrder.forEach(function (li, col) { layerCol[li] = col + cintaShift; });
+
+    if (numLayers >= 2) {
+      var pathParts = [];
+      // Empezar en la capa A (índice 0, siempre primera en orden físico i=0)
+      var curExt = extents[0];
+      var startX = barX(layerCol[0]) + BAR_W / 2;
+      var startY = svgY(curExt.hi); // top de capa A = aR
+      pathParts.push('M ' + startX + ' ' + startY);
+
+      // Bajar por capa A hasta su base
+      var endY = svgY(curExt.lo);
+      pathParts.push('L ' + startX + ' ' + endY);
+
+      // Pliegues alternados: de capa i a capa i+1
+      for (var li = 0; li < numLayers - 1; li++) {
+        var fromIdx = li;
+        var toIdx   = li + 1;
+        var fromExt = extents[fromIdx];
+        var toExt   = extents[toIdx];
+
+        // Punto de pliegue: la capa 'desde' tiene su extremo compartido con 'hacia'
+        var foldY  = (fromIdx % 2 === 0) ? svgY(fromExt.lo) : svgY(fromExt.hi);
+        var fromX  = barX(layerCol[fromIdx]) + BAR_W / 2;
+        var toX    = barX(layerCol[toIdx])   + BAR_W / 2;
+        var midX   = (fromX + toX) / 2;
+
+        if (fromIdx % 2 === 0) {
+          // Pliegue ↓→↑ (base): arco curva hacia abajo
+          pathParts.push('Q ' + midX + ' ' + (foldY + ARC_DEPTH) + ' ' + toX + ' ' + foldY);
+        } else {
+          // Pliegue ↑→↓ (tope): arco curva hacia arriba
+          pathParts.push('Q ' + midX + ' ' + (foldY - ARC_DEPTH) + ' ' + toX + ' ' + foldY);
+        }
+
+        // Trazar la capa siguiente hasta su otro extremo
+        var nextY = (toIdx % 2 === 0) ? svgY(toExt.lo) : svgY(toExt.hi);
+        pathParts.push('L ' + toX + ' ' + nextY);
+      }
+
+      svg += '<path d="' + pathParts.join(' ') + '" fill="none" stroke="#94a3b8"'
+        + ' stroke-width="1.5" stroke-dasharray="4,3" opacity="0.7"/>';
+    }
+
+    svg += '</svg>';
+    return svg;
+  }
+
+  /* T-27: Tabla de gramaje por zonas */
+
+  function buildGaugeTable(vars, aR, galgas, config) {
+    if (galgas <= 0) {
+      return '<p class="text-xs text-slate-400 italic">Introduce el grosor de lámina en galgas para ver el análisis.</p>';
+    }
+    var gz    = computeGaugeZones(vars, aR, config);
+    var zones = gz.zones.slice().reverse(); // de arriba a abajo
+    var gVals = zones.map(function (z) { return effectiveG(z, galgas, aR, config); });
+    var gMax  = Math.max.apply(null, gVals) || 1;
+
+    // Leyenda gradiente
+    var html = '<div class="mb-2 h-3 rounded" style="background:linear-gradient(to right,'
+      + gaugeColor(0) + ',' + gaugeColor(0.5) + ',' + gaugeColor(1) + ')"></div>';
+
+    html += '<table class="w-full text-xs border-collapse">';
+    html += '<thead><tr class="text-slate-400 border-b border-slate-100">'
+      + '<th class="text-left py-1 pr-2 font-medium">Zona (alt.)</th>'
+      + '<th class="text-right py-1 pr-2 font-medium">Galgas</th>'
+      + '<th class="text-right py-1 font-medium">%</th>'
+      + '</tr></thead><tbody>';
+
+    zones.forEach(function (z, i) {
+      var gv = gVals[i];
+      var t  = gv / gMax;
+      var pct = Math.round(t * 100);
+      var color = gaugeColor(t);
+      html += '<tr class="border-b border-slate-50">'
+        + '<td class="py-1 pr-2">'
+        + '<span class="inline-block w-3 h-3 rounded-sm mr-1 align-middle" style="background:' + color + '"></span>'
+        + z.yBot + '–' + z.yTop
+        + '</td>'
+        + '<td class="py-1 pr-2 text-right tabular">' + gv + '</td>'
+        + '<td class="py-1 text-right tabular">' + pct + '%</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  /* ---- Render principal ---- */
+
+  /* T-30: render() */
+
+  function render() {
+    // Formulario
+    renderForm();
+
+    // Modal config
+    renderConfigModal();
+
+    // Sección resultados
+    var secRes = document.getElementById('section-results');
+    if (!APP.results) {
+      secRes.classList.add('hidden');
+      return;
+    }
+    secRes.classList.remove('hidden');
+
+    var R = APP.results;
+    var html = '';
+
+    // Barra de resumen
+    html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">'
+      + renderSummaryBar() + '</div>';
+
+    if (R.totalCount > 0) {
+      // Chips calidad
+      var qc = renderQualityChips();
+      if (qc) html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3">' + qc + '</div>';
+
+      // Chips galga
+      var gc = renderGaugeChips();
+      if (gc) html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3">' + gc + '</div>';
+
+      // Tabla
+      html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm">'
+        + renderTable() + '</div>';
+
+      // Paginación
+      var pg = renderPagination();
+      if (pg) html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3">' + pg + '</div>';
+    }
+
+    secRes.innerHTML = html;
+
+    // Bind eventos de resultados
+    bindResultsEvents();
+
+    // T-36/T-42: activar panel y montar viewers tras la transición CSS
+    if (APP.lockedKey) {
+      var gridEl = document.getElementById('panel-grid-' + APP.lockedKey);
+      if (gridEl) {
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            gridEl.classList.remove('closed');
+            gridEl.classList.add('open');
+
+            var mounted = false;
+            function doMount() {
+              if (mounted) return;
+              mounted = true;
+              console.log('[3D] montando viewers — clave:', APP.lockedKey);
+              mountViewers(APP.lockedCombination, APP.results);
+            }
+            // Esperar transitionend; fallback de 350 ms por si no dispara
+            gridEl.addEventListener('transitionend', doMount, { once: true });
+            setTimeout(doMount, 350);
+          });
+        });
+      }
+    }
+  }
+
+  /* T-30: Bind de eventos de resultados */
+
+  function bindResultsEvents() {
+    // CSV
+    var btnCsv = document.getElementById('btn-csv');
+    if (btnCsv) {
+      btnCsv.addEventListener('click', function () {
+        var R = APP.results;
+        if (!R) return;
+        APP.csvLoading = true;
+        render();
+        setTimeout(function () {
+          downloadCSV(R.cP, R.aR, R.allEnriched || R.combinations);
+          APP.csvLoading = false;
+          render();
+        }, 0);
+      });
+    }
+
+    // Chips calidad
+    document.querySelectorAll('[data-qfilter]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = this.dataset.qfilter;
+        if (key === '__all__') {
+          APP.qualityFilter    = null;
+          APP.gaugeLayerFilter = null;
+        } else if (APP.qualityFilter === key) {
+          APP.qualityFilter    = null;
+          APP.gaugeLayerFilter = null;
+        } else {
+          APP.qualityFilter    = key;
+          APP.gaugeLayerFilter = null;
+        }
+        runCalculation(1);
+      });
+    });
+
+    // Chips galga
+    document.querySelectorAll('[data-gfilter]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var val = this.dataset.gfilter;
+        if (val === '__all__') {
+          APP.gaugeLayerFilter = null;
+        } else {
+          var n = parseInt(val, 10);
+          APP.gaugeLayerFilter = (APP.gaugeLayerFilter === n) ? null : n;
+        }
+        runCalculation(APP.results ? APP.results.page : 1);
+      });
+    });
+
+    // Paginación — cambio de pageSize
+    var selPs = document.getElementById('sel-pagesize');
+    if (selPs) {
+      selPs.addEventListener('change', function () {
+        APP.pageSize = parseInt(this.value, 10);
+        runCalculation(1);
+      });
+    }
+
+    // Paginación — botones de página
+    document.querySelectorAll('[data-page]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (this.disabled) return;
+        runCalculation(parseInt(this.dataset.page, 10));
+      });
+    });
+
+    // T-21: Click en filas de tabla
+    document.querySelectorAll('tr[data-key]').forEach(function (tr) {
+      tr.addEventListener('click', function () {
+        var key = this.dataset.key;
+        handleRowClick(key);
+      });
+    });
+  }
+
+  /* T-23: Gestión click en fila + animación */
+
+  function handleRowClick(key) {
+    if (APP.lockedKey === key) {
+      // Cerrar el panel actual con animación
+      closePanel(key, false, function () {
+        APP.lockedKey         = null;
+        APP.lockedCombination = null;
+        render();
+      });
+      return;
+    }
+
+    if (APP.lockedKey) {
+      // Cambiar de fila: cerrar instantáneo, abrir nuevo tras 350ms
+      var prevKey = APP.lockedKey;
+      disposeAllViewers();
+      APP.lockedKey         = null;
+      APP.lockedCombination = null;
+      APP.instantClose      = true;
+      render(); // Quita el panel anterior del DOM
+
+      setTimeout(function () {
+        APP.instantClose      = false;
+        APP.lockedKey         = key;
+        APP.lockedCombination = findCombinationByKey(key);
+        render();
+        scrollToRow(key);
+      }, 350);
+    } else {
+      // Abrir nuevo panel
+      disposeAllViewers();
+      APP.lockedKey         = key;
+      APP.lockedCombination = findCombinationByKey(key);
+      render();
+      scrollToRow(key);
+    }
+  }
+
+  function closePanel(key, instant, cb) {
+    var gridEl = document.getElementById('panel-grid-' + key);
+    if (!gridEl || instant) {
+      disposeAllViewers();
+      if (cb) cb();
+      return;
+    }
+    gridEl.classList.add('closed');
+    gridEl.classList.remove('open');
+    gridEl.addEventListener('transitionend', function handler() {
+      gridEl.removeEventListener('transitionend', handler);
+      disposeAllViewers();
+      if (cb) cb();
+    });
+  }
+
+  function findCombinationByKey(key) {
+    if (!APP.results) return null;
+    return APP.results.combinations.find(function (r) { return rowKey(r) === key; }) || null;
+  }
+
+  /* T-32: Scroll a fila */
+  function scrollToRow(key) {
+    if (window.innerWidth >= 1024) return;
+    setTimeout(function () {
+      var tr = document.querySelector('tr[data-key="' + key + '"]');
+      if (tr) tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  }
+
+  </script>
+
+  <!-- ============================================================ -->
+  <!-- VISUALIZACIONES 3D                                            -->
+  <!-- ============================================================ -->
+  <script>
+
+  function mountViewers(row, R) {
+    if (!row || !R) return;
+    var key    = rowKey(row);
+    var aR     = row.aR;
+    var galgas = R.galgas || 0;
+    var config = R.config || null;
+
+    mountGaugeViewer(key, row, aR, galgas, config);
+    mountRollViewer(key, row, aR, config);
+  }
+
+  /* T-28: GaugeViewer */
+
+  function mountGaugeViewer(key, vars, aR, galgas, config) {
+    var containerId = 'gauge-viewer-' + key;
+    var container   = document.getElementById(containerId);
+    if (!container) { console.warn('[GaugeViewer] contenedor no encontrado:', containerId); return; }
+
+    console.log('[GaugeViewer] container encontrado — w:', container.clientWidth, 'h:', container.clientHeight);
+
+    var gz    = computeGaugeZones(vars, aR, config);
+    var zones = gz.zones;
+    var gVals = zones.map(function (z) { return effectiveG(z, galgas, aR, config); });
+    var gMax  = Math.max.apply(null, gVals) || 1;
+
+    var STRIP_H = 2.8;
+    var Y_SCALE = STRIP_H / aR;
+
+    var scene    = new THREE.Scene();
+    scene.background = new THREE.Color(0xf1f5f9);
+
+    var w = container.clientWidth  || 300;
+    var h = container.clientHeight || 200;
+    console.log('[GaugeViewer] tamaño renderer:', w, '×', h);
+    var camera = new THREE.PerspectiveCamera(38, w / h, 0.1, 100);
+
+    var CAM_Y   = 3.5;
+    var radius  = 8;
+    var azimuth = Math.atan2(5, 5);
+    var panOffsetY = 0;
+    var target  = new THREE.Vector3(0, 1.4, 0);
+
+    function updateCamera() {
+      camera.position.set(
+        target.x + radius * Math.sin(azimuth),
+        CAM_Y + panOffsetY,
+        target.z + radius * Math.cos(azimuth)
+      );
+      camera.lookAt(target);
+    }
+    updateCamera();
+
+    // T-43: proteger creación del renderer
+    var renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+    } catch (e) {
+      console.error('[GaugeViewer] WebGLRenderer falló:', e);
+      container.innerHTML = '<p class="text-xs text-slate-400 p-2">WebGL no disponible en este navegador.</p>';
+      return;
+    }
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(w, h);
+    container.appendChild(renderer.domElement);
+    console.log('[GaugeViewer] renderer creado y canvas añadido al DOM');
+
+    // Luces
+    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+    var dLight = new THREE.DirectionalLight(0xffffff, 0.85);
+    dLight.position.set(6, 8, 6);
+    scene.add(dLight);
+    var fLight = new THREE.DirectionalLight(0x99aaff, 0.2);
+    fLight.position.set(-4, 0, 4);
+    scene.add(fLight);
+
+    // T-39: un CylinderGeometry por zona → color sólido por segmento, sin dependencia
+    // del orden interno de vértices de Three.js r184
+    var cylRadius = 0.7;
+
+    zones.forEach(function (z, i) {
+      var segH = (z.yTop - z.yBot) * Y_SCALE;
+      if (segH < 0.001) return;
+      var col    = new THREE.Color(gaugeColor(gVals[i] / gMax));
+      // openEnded: true en segmentos intermedios para evitar tapas visibles en las uniones
+      var isFirst = (i === 0);
+      var isLast  = (i === zones.length - 1);
+      var segGeo  = new THREE.CylinderGeometry(cylRadius, cylRadius, segH, 32, 1, !(isFirst || isLast));
+      var segMat  = new THREE.MeshPhongMaterial({ color: col });
+      var seg     = new THREE.Mesh(segGeo, segMat);
+      seg.position.y = z.yBot * Y_SCALE + segH / 2;
+      scene.add(seg);
+    });
+
+    // Núcleo cartón
+    var coreGeo = new THREE.CylinderGeometry(cylRadius * 0.28, cylRadius * 0.28, STRIP_H + 0.1, 24);
+    var coreMat = new THREE.MeshPhongMaterial({ color: 0xc4965a });
+    var core    = new THREE.Mesh(coreGeo, coreMat);
+    core.position.y = STRIP_H / 2;
+    scene.add(core);
+
+    // Animación
+    var t0 = 0;
+    var dragging = false, lastX = 0, lastY = 0;
+
+    // T-37: registrar entry antes de iniciar el loop para que disposeViewer pueda cancelarlo
+    APP.viewers[containerId] = { animId: null, renderer: renderer };
+    console.log('[GaugeViewer] iniciando loop de animación');
+
+    function animate() {
+      APP.viewers[containerId].animId = requestAnimationFrame(animate);
+      if (!dragging) {
+        t0 += 0.016;
+        azimuth += Math.sin(t0 * 0.15) * 0.0003;
+      }
+      updateCamera();
+      renderer.render(scene, camera);
+    }
+    APP.viewers[containerId].animId = requestAnimationFrame(animate);
+
+    // Interacción
+    var canvas = renderer.domElement;
+    canvas.addEventListener('mousedown', function (e) { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+    window.addEventListener('mouseup', function () { dragging = false; });
+    canvas.addEventListener('mousemove', function (e) {
+      if (!dragging) return;
+      azimuth    -= (e.clientX - lastX) * 0.008;
+      panOffsetY -= (e.clientY - lastY) * 0.006;
+      lastX = e.clientX; lastY = e.clientY;
+    });
+    canvas.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      radius = Math.max(2.5, Math.min(16, radius + e.deltaY * 0.01));
+    }, { passive: false });
+
+    // Resize
+    var obs = new ResizeObserver(function () {
+      var nw = container.clientWidth;
+      var nh = container.clientHeight;
+      renderer.setSize(nw, nh);
+      camera.aspect = nw / nh;
+      camera.updateProjectionMatrix();
+    });
+    obs.observe(container);
+    APP.viewers[containerId].observer = obs;
+  }
+
+  /* T-29: RollViewer */
+
+  function mountRollViewer(key, vars, aR, config) {
+    var containerId = 'roll-viewer-' + key;
+    var container   = document.getElementById(containerId);
+    if (!container) { console.warn('[RollViewer] contenedor no encontrado:', containerId); return; }
+
+    console.log('[RollViewer] container encontrado — w:', container.clientWidth, 'h:', container.clientHeight);
+
+    var keys    = ['a','b','c','d','e','f','g'];
+    var extents = computeLayerExtents(vars);
+    var numLayers = extents.length;
+
+    var STRIP_H = 2.8;
+    var Y_SCALE = STRIP_H / aR;
+    var Z_STEP  = 0.22;
+    var Z_FRONT = ((numLayers - 1) / 2) * Z_STEP;
+
+    // T-40: el orden visual del diagrama es izquierda→derecha (a primero).
+    // En 3D necesitamos frente→fondo: la última capa del orden visual (b) queda al frente,
+    // la primera (a) queda al fondo. Se invierte el array.
+    var depthOrder = getVisualOrder(numLayers).slice().reverse();
+    var hasCinta   = config && (config.plegadoCinta > 0 || config.anchoCinta > 0);
+
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf1f5f9);
+
+    var w = container.clientWidth  || 300;
+    var h = container.clientHeight || 260;
+    console.log('[RollViewer] tamaño renderer:', w, '×', h);
+    var camera = new THREE.PerspectiveCamera(38, w / h, 0.1, 100);
+
+    var CAM_Y   = 4.0;
+    var radius  = 11;
+    var azimuth = Math.atan2(6.5, 4.5 - 1.0);
+    var panOffsetY = 0;
+    var target  = new THREE.Vector3(1.0, 1.4, 0);
+
+    function updateCamera() {
+      camera.position.set(
+        target.x + radius * Math.sin(azimuth),
+        CAM_Y + panOffsetY,
+        target.z + radius * Math.cos(azimuth)
+      );
+      camera.lookAt(target);
+    }
+    updateCamera();
+
+    // T-43: proteger creación del renderer
+    var renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+    } catch (e) {
+      console.error('[RollViewer] WebGLRenderer falló:', e);
+      container.innerHTML = '<p class="text-xs text-slate-400 p-2">WebGL no disponible en este navegador.</p>';
+      return;
+    }
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(w, h);
+    container.appendChild(renderer.domElement);
+    console.log('[RollViewer] renderer creado y canvas añadido al DOM');
+
+    // Luces
+    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+    var dl = new THREE.DirectionalLight(0xffffff, 0.85);
+    dl.position.set(6, 8, 5);
+    scene.add(dl);
+    var fl = new THREE.DirectionalLight(0x99aaff, 0.2);
+    fl.position.set(-4, 0, 4);
+    scene.add(fl);
+
+    var cylRadius = 0.7;
+
+    // Cilindro central
+    var cylGeo = new THREE.CylinderGeometry(cylRadius, cylRadius, STRIP_H, 32);
+    var cylMat = new THREE.MeshPhongMaterial({ color: LAYER_COLORS[0], transparent: true, opacity: 0.35 });
+    var cyl    = new THREE.Mesh(cylGeo, cylMat);
+    cyl.position.set(1.0, STRIP_H / 2, 0);
+    scene.add(cyl);
+
+    // Núcleo cartón
+    var coreGeo = new THREE.CylinderGeometry(cylRadius*0.28, cylRadius*0.28, STRIP_H+0.1, 24);
+    var coreMat = new THREE.MeshPhongMaterial({ color: 0xc4965a });
+    var core    = new THREE.Mesh(coreGeo, coreMat);
+    core.position.set(1.0, STRIP_H/2, 0);
+    scene.add(core);
+
+    // Capas
+    depthOrder.forEach(function (layerIdx, di) {
+      var ext    = extents[layerIdx];
+      if (!ext) return;
+      var z      = Z_FRONT - di * Z_STEP;
+      var hexCol = LAYER_COLORS[layerIdx];
+      var pastel = lighten(hexCol, 0.65);
+
+      var yLo  = ext.lo * Y_SCALE;
+      var yHi  = ext.hi * Y_SCALE;
+      var yH   = Math.max(0.01, yHi - yLo);
+      var yCtr = (yLo + yHi) / 2;
+
+      // Ajustar X de la capa A para tocar superficie del cilindro
+      var xOff = (layerIdx === 0) ? (1.0 + Math.sqrt(Math.max(0, cylRadius*cylRadius - z*z))) : 2.2;
+
+      var stripW = 1.0;
+      var stripGeo = new THREE.BoxGeometry(stripW, yH, 0.04);
+      var stripMat = new THREE.MeshPhongMaterial({ color: pastel });
+      var strip    = new THREE.Mesh(stripGeo, stripMat);
+      strip.position.set(xOff + stripW/2, yCtr, z);
+      scene.add(strip);
+
+      // Borde superior en color pleno
+      var borderGeo = new THREE.BoxGeometry(stripW + 0.02, 0.06, 0.05);
+      var borderMat = new THREE.MeshPhongMaterial({ color: hexCol });
+      var border    = new THREE.Mesh(borderGeo, borderMat);
+      border.position.set(xOff + stripW/2, yHi, z);
+      scene.add(border);
+
+      // Sprite de letra
+      var canvas2d = document.createElement('canvas');
+      canvas2d.width = canvas2d.height = 64;
+      var ctx = canvas2d.getContext('2d');
+      ctx.clearRect(0, 0, 64, 64);
+      ctx.font = 'bold 48px Arial';
+      ctx.fillStyle = hexIntToCss(hexCol);
+      ctx.textAlign  = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(keys[layerIdx], 32, 32);
+      var tex     = new THREE.CanvasTexture(canvas2d);
+      var spMat   = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false });
+      var sprite  = new THREE.Sprite(spMat);
+      sprite.scale.set(0.38, 0.38, 1);
+      sprite.renderOrder = 999;
+      sprite.position.set(xOff + stripW + 0.28, yCtr, z);
+      scene.add(sprite);
+    });
+
+    // Capa CA si aplica
+    if (hasCinta) {
+      var zCA = Z_FRONT - numLayers * Z_STEP;
+      var plegY = config.plegadoCinta * Y_SCALE;
+      var caGeo = new THREE.BoxGeometry(1.0, plegY, 0.04);
+      var caMat = new THREE.MeshPhongMaterial({ color: LAYER_COLORS[7], transparent: true, opacity: 0.8 });
+      var caStrip = new THREE.Mesh(caGeo, caMat);
+      caStrip.position.set(1.0 + Math.sqrt(Math.max(0, cylRadius*cylRadius - zCA*zCA)) + 0.5,
+                           (STRIP_H - plegY/2), zCA);
+      scene.add(caStrip);
+    }
+
+    // T-38: registrar entry antes de iniciar el loop para que disposeViewer pueda cancelarlo
+    APP.viewers[containerId] = { animId: null, renderer: renderer };
+    console.log('[RollViewer] iniciando loop de animación');
+
+    var t0 = 0;
+    var dragging = false, lastX = 0, lastY = 0;
+
+    function animate() {
+      APP.viewers[containerId].animId = requestAnimationFrame(animate);
+      if (!dragging) {
+        t0 += 0.016;
+        azimuth += Math.sin(t0 * 0.15) * 0.0003;
+      }
+      updateCamera();
+      renderer.render(scene, camera);
+    }
+    APP.viewers[containerId].animId = requestAnimationFrame(animate);
+
+    var canvas = renderer.domElement;
+    canvas.addEventListener('mousedown', function (e) { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+    window.addEventListener('mouseup', function () { dragging = false; });
+    canvas.addEventListener('mousemove', function (e) {
+      if (!dragging) return;
+      azimuth    -= (e.clientX - lastX) * 0.008;
+      panOffsetY -= (e.clientY - lastY) * 0.006;
+      lastX = e.clientX; lastY = e.clientY;
+    });
+    canvas.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      radius = Math.max(3.0, Math.min(18.0, radius + e.deltaY * 0.01));
+    }, { passive: false });
+
+    var obs = new ResizeObserver(function () {
+      var nw = container.clientWidth;
+      var nh = container.clientHeight;
+      renderer.setSize(nw, nh);
+      camera.aspect = nw / nh;
+      camera.updateProjectionMatrix();
+    });
+    obs.observe(container);
+    APP.viewers[containerId].observer = obs;
+  }
+
+  </script>
+
+  <!-- ============================================================ -->
+  <!-- TESTS — T-06 / T-34                                          -->
+  <!-- ============================================================ -->
+  <script>
+  (function runTests() {
+    var ok = true;
+
+    function assert(cond, msg) {
+      if (!cond) { console.error('❌ FAIL: ' + msg); ok = false; }
+    }
+
+    // T-04 Validación
+    assert(!validateInputs(0, 5).ok,    'validateInputs: cP=0 debe fallar');
+    assert(!validateInputs(5, 0).ok,    'validateInputs: aR=0 debe fallar');
+    assert(!validateInputs(-1, 5).ok,   'validateInputs: negativo debe fallar');
+    assert(!validateInputs(1.5, 5).ok,  'validateInputs: decimal cP debe fallar');
+    assert(!validateInputs(5, 1.5).ok,  'validateInputs: decimal aR debe fallar');
+    assert(!validateInputs(NaN, 5).ok,  'validateInputs: NaN debe fallar');
+    assert(validateInputs(10, 5).ok,    'validateInputs: caso válido debe pasar');
+
+    // T-05 Algoritmo
+    assert(calculateCombinations(3, 5).length === 0,  'cP < aR → 0 soluciones');
+    assert(calculateCombinations(5, 5).length === 1,  'cP = aR → 1 solución');
+    assert(calculateCombinations(4, 2).length === 5,  'cP=4,aR=2 → 5 soluciones');
+    assert(calculateCombinations(5, 2).length === 9,  'cP=5,aR=2 → 9 soluciones');
+
+    // Invariantes de todas las soluciones con cP=8, aR=4
+    var combos = calculateCombinations(8, 4);
+    assert(combos.length > 0, 'cP=8,aR=4 → al menos 1 solución');
+    combos.forEach(function (c) {
+      var sum = c.a + c.b + c.c + c.d + c.e + c.f + c.g;
+      assert(Math.abs(sum - 8) < 1e-9,  'suma = cP');
+      assert(c.a === 4,                  'a = aR');
+      assert(c.b <= 4 && c.c <= 4 && c.d <= 4 && c.e <= 4 && c.f <= 4 && c.g <= 4, 'todas ≤ aR');
+      assert(c.c <= c.b, 'c ≤ b');
+      assert(c.e <= c.d, 'e ≤ d');
+      assert(c.g <= c.f, 'g ≤ f');
+      // Continuidad
+      var arr = [c.b, c.c, c.d, c.e, c.f, c.g];
+      var seenZero = false;
+      arr.forEach(function (v) {
+        if (seenZero) assert(v === 0, 'continuidad: cero seguido de no-cero');
+        if (v === 0) seenZero = true;
+      });
+      // Múltiplos de 0.5
+      [c.b,c.c,c.d,c.e,c.f,c.g].forEach(function (v) {
+        assert(Math.round(v * 2) === v * 2, 'múltiplo de 0.5');
+      });
+      // Simetría D
+      if (c.d > 0) assert(c.c === c.b, 'simetría D: d>0 → c=b');
+      // Simetría F
+      if (c.f > 0) assert(c.e === c.d, 'simetría F: f>0 → e=d');
+    });
+
+    // Sin duplicados
+    var seen = {};
+    combos.forEach(function (c) {
+      var k = [c.a,c.b,c.c,c.d,c.e,c.f,c.g].join(',');
+      assert(!seen[k], 'sin duplicados: ' + k);
+      seen[k] = true;
+    });
+
+    // T-09 Score
+    var s = computeRollScore({a:5,b:5,c:5,d:5,e:5,f:5,g:5}, 5, 0, null);
+    assert(s >= 0 && s <= 1, 'score en [0,1]');
+
+    // T-12 Colores
+    var c0 = gaugeColor(0), c1 = gaugeColor(1);
+    assert(c0.startsWith('rgb('), 'gaugeColor(0) → rgb(...)');
+    assert(c1.startsWith('rgb('), 'gaugeColor(1) → rgb(...)');
+
+    // T-11 CSV
+    var csv = combinationsToCSV([{cP:5,aR:5,a:5,b:0,c:0,d:0,e:0,f:0,g:0}]);
+    assert(csv.startsWith('cP,aR,a,b,c,d,e,f,g'), 'CSV: cabecera correcta');
+    assert(csv.split('\n').length === 2, 'CSV: 1 fila de datos');
+
+    // T-09 getQualityLevel
+    assert(getQualityLevel(0.95).key === 'excelente',  'getQualityLevel(0.95) = excelente');
+    assert(getQualityLevel(0.10).key === 'deficiente', 'getQualityLevel(0.10) = deficiente');
+
+    if (ok) {
+      console.log('%c✓ Todos los tests pasaron', 'color:green;font-weight:bold;font-size:14px');
+    } else {
+      console.warn('⚠ Algunos tests fallaron — ver errores arriba');
+    }
+  })();
+  </script>
+
+  <!-- ============================================================ -->
+  <!-- INIT                                                          -->
+  <!-- ============================================================ -->
+  <script>
+  document.addEventListener('DOMContentLoaded', function () {
+    // Verificar CDNs
+    if (typeof THREE === 'undefined') {
+      console.error('❌ Three.js no cargó');
+    } else {
+      console.log('%c✓ Three.js r' + THREE.REVISION + ' listo', 'color:green');
+    }
+
+    loadConfig();
+    render();
+
+    // Botón config
+    document.getElementById('btn-config').addEventListener('click', function () {
+      APP.configOpen = true;
+      renderConfigModal();
+    });
+
+    // T-32: Escape cierra panel
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && APP.lockedKey) {
+        var prevKey = APP.lockedKey;
+        closePanel(prevKey, false, function () {
+          APP.lockedKey         = null;
+          APP.lockedCombination = null;
+          render();
+        });
+      }
+      if (e.key === 'Escape' && APP.configOpen) {
+        APP.configOpen = false;
+        renderConfigModal();
+      }
+    });
+  });
+  </script>
+
+</body>
+</html>
