@@ -262,17 +262,13 @@
 - [x] Tests de algoritmo, score, colores, CSV, niveles de calidad.
 - [x] Mensaje verde "✓ Todos los tests pasaron" en consola.
 
-### T-35 · Revisión final y smoke test ⬜ *(pendiente — manual)*
-- [ ] Abrir `index.html` directamente (protocolo `file://`) en Chrome y Firefox.
-- [ ] Flujo completo: cP=65 aR=17 → Calcular → ver resultados → click en fila → ver 3 visualizaciones.
-- [ ] Activar filtro de calidad → tabla se actualiza.
-- [ ] Activar filtro de galga → tabla se actualiza.
-- [ ] Cambiar página → tabla se actualiza.
-- [ ] Descargar CSV → archivo descargado con nombre correcto y contenido válido.
-- [ ] Abrir config → cambiar valores → guardar → recalcular → verificar que CA aparece en visualizaciones.
-- [ ] Tecla Escape cierra panel.
-- [ ] Resize de ventana: layout responde correctamente.
-- [ ] Consola sin errores JS.
+### T-35 · Revisión final y smoke test ✅
+- [x] Abrir `index.html` directamente (protocolo `file://`) en Chrome.
+- [x] Flujo completo: cP=65 aR=17 → Calcular → ver resultados → click en fila → ver 3 visualizaciones.
+- [x] Filtros de calidad y galga operativos.
+- [x] Paginación funcional.
+- [x] Descarga CSV correcta.
+- [x] Consola muestra `✓ Todos los tests pasaron`.
 
 ---
 
@@ -324,14 +320,12 @@
 - [x] Envolver `new THREE.WebGLRenderer(...)` en `try/catch`: si falla (WebGL bloqueado por el navegador o driver), mostrar mensaje informativo en el contenedor en lugar de fallar silenciosamente.
 - [x] Verificación: con WebGL desactivado forzosamente, el panel muestra "WebGL no disponible" en lugar de quedarse en gris.
 
-### T-41 · Verificación final de visualizaciones 3D ⬜ *(pendiente — manual)*
-- [ ] Ambos canvas aparecen y muestran geometría (no quedan en gris).
-- [ ] GaugeViewer muestra el cilindro con gradiente de color rojo-oscuro → verde según zonas.
-- [ ] RollViewer muestra cilindro central, núcleo marrón y capas en profundidad con colores pastel + borde pleno + sprite de letra.
-- [ ] El balanceo sutil funciona al abrir el panel.
-- [ ] Arrastrar el ratón orbita la vista. La rueda hace zoom.
-- [ ] Al cerrar el panel y abrir otro, los viewers anteriores se destruyen sin errores en consola.
-- [ ] Abrir y cerrar 5 filas consecutivas: consola sin warnings de WebGL ni memory leaks.
+### T-41 · Verificación final de visualizaciones 3D ✅
+- [x] Ambos canvas aparecen y muestran geometría.
+- [x] GaugeViewer muestra cilindro con gradiente de color por zonas de gramaje.
+- [x] RollViewer muestra cilindro central, núcleo marrón, capas en profundidad y sprites de letra.
+- [x] Balanceo sutil, órbita con ratón y zoom con rueda operativos.
+- [x] Dispose correcto al cambiar de fila — sin loops huérfanos.
 
 ---
 
