@@ -68,7 +68,7 @@
   <!-- MODAL DE CONFIGURACIÓN -->
   <div id="modal-config" class="hidden fixed inset-0 z-50 flex items-center justify-center">
     <div id="modal-overlay" class="absolute inset-0" style="background:rgba(15,23,42,0.45)"></div>
-    <div class="relative bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6 z-10">
+    <div class="relative bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 p-6 z-10 max-h-[90vh] overflow-y-auto">
       <!-- Renderizado por renderConfigModal() -->
     </div>
   </div>
@@ -110,16 +110,93 @@
     anchoCinta:         5,
     galgasCinta:        80,
     distanciaSeguridad: 1,
+    maquinas: [
+      {
+        id:                  'maquina-test',
+        nombre:              'Máquina de pruebas',
+        diametroPinza:       40,
+        factorCompactacion:  1.0,
+      },
+    ],
+    maquinaActivaId: 'maquina-test',
   };
+
+  /* Nuevas funciones de dominio — bolsa → rollo → diámetro */
+
+  function galgaToMm(galgas) {
+    return galgas / 4000; // 1 galga = 0.25 µm = 0.00025 mm
+  }
+
+  function deriveRollInputs(form) {
+    var u = Number(form.unidadesPorRollo) || 0;
+    if (form.orientacion === 'ancho') {
+      return { cP: Number(form.largoBolsa) || 0, L: (Number(form.anchoBolsa) || 0) * u, aR: Number(form.aR) || 0 };
+    }
+    return { cP: Number(form.anchoBolsa) || 0, L: (Number(form.largoBolsa) || 0) * u, aR: Number(form.aR) || 0 };
+  }
+
+  function computeMaxThicknessMm(vars, aR, galgas, config) {
+    if (!galgas || galgas <= 0) return 0;
+    var gz = computeGaugeZones(vars, aR, config);
+    var maxG = 0;
+    for (var i = 0; i < gz.zones.length; i++) {
+      var g = effectiveG(gz.zones[i], galgas, aR, config);
+      if (g > maxG) maxG = g;
+    }
+    return galgaToMm(maxG);
+  }
+
+  function computeRollDiameter(grosorMaxMm, L, dInt, k) {
+    if (L <= 0 || grosorMaxMm <= 0) return dInt;
+    var area = 4 * L * grosorMaxMm * (k || 1);
+    return Math.sqrt(dInt * dInt + area / Math.PI);
+  }
+
+  function resolveInnerDiameter(form, config) {
+    if (form.tipoInterior === 'core') return Number(form.diametroInterior) || 0;
+    var m = (config.maquinas || []).find(function (x) { return x.id === form.maquinaId; })
+         || (config.maquinas || []).find(function (x) { return x.id === config.maquinaActivaId; });
+    return m ? m.diametroPinza : 0;
+  }
+
+  function getActiveMachine(config, maquinaId) {
+    var list = config.maquinas || [];
+    return list.find(function (m) { return m.id === maquinaId; })
+        || list.find(function (m) { return m.id === config.maquinaActivaId; })
+        || list[0]
+        || null;
+  }
 
   /* T-04: Validación */
 
+  // Validación interna del algoritmo (cP y aR ya calculados)
   function validateInputs(cP, aR) {
     if (!isFinite(cP) || !isFinite(aR)) return { ok: false, error: 'cP y aR deben ser números.' };
     if (cP !== Math.floor(cP))          return { ok: false, error: 'cP debe ser un número entero.' };
     if (aR !== Math.floor(aR))          return { ok: false, error: 'aR debe ser un número entero.' };
     if (aR <= 0)                        return { ok: false, error: 'aR debe ser mayor que 0.' };
     if (cP <= 0)                        return { ok: false, error: 'cP debe ser mayor que 0.' };
+    return { ok: true };
+  }
+
+  // Validación del formulario de bolsa antes de calcular
+  function validateForm(form, config) {
+    var ab = Number(form.anchoBolsa), lb = Number(form.largoBolsa);
+    var u  = Number(form.unidadesPorRollo), aR = Number(form.aR);
+    var g  = Number(form.galgas), di = Number(form.diametroInterior);
+    if (!(ab > 0)) return { ok: false, error: 'El ancho de la bolsa debe ser mayor que 0.' };
+    if (!(lb > 0)) return { ok: false, error: 'El largo de la bolsa debe ser mayor que 0.' };
+    if (!(u  > 0)) return { ok: false, error: 'Las unidades por rollo deben ser mayor que 0.' };
+    if (!(g  > 0)) return { ok: false, error: 'La galga debe ser mayor que 0.' };
+    if (!(aR > 0)) return { ok: false, error: 'La altura del rollo (aR) debe ser mayor que 0.' };
+    if (!isFinite(aR) || aR !== Math.floor(aR)) return { ok: false, error: 'La altura del rollo (aR) debe ser un número entero.' };
+    if (form.tipoInterior === 'core' && !(di > 0)) return { ok: false, error: 'El diámetro interior debe ser mayor que 0.' };
+    var derived = deriveRollInputs(form);
+    var cP = derived.cP;
+    if (!isFinite(cP) || cP !== Math.floor(cP)) return { ok: false, error: 'El valor a plegar (cP) derivado debe ser un número entero.' };
+    if (cP <= aR) return { ok: false, error: 'El largo de la bolsa debe ser mayor que la altura del rollo (aR).' };
+    var maquinas = config.maquinas || [];
+    if (maquinas.length === 0) return { ok: false, error: 'Define al menos una máquina en la configuración.' };
     return { ok: true };
   }
 
@@ -328,24 +405,28 @@
 
   /* T-10: Enriquecimiento de fila */
 
-  function enrichCombination(combo, aR, galgas, config) {
-    var score  = computeRollScore(combo, aR, galgas, config);
-    var gz     = computeGaugeZones(combo, aR, config);
-    var cP     = combo.a + combo.b + combo.c + combo.d + combo.e + combo.f + combo.g;
+  function enrichCombination(combo, aR, galgas, config, L, dInt, k) {
+    var score     = computeRollScore(combo, aR, galgas, config);
+    var gz        = computeGaugeZones(combo, aR, config);
+    var cP        = combo.a + combo.b + combo.c + combo.d + combo.e + combo.f + combo.g;
+    var grosorMm  = computeMaxThicknessMm(combo, aR, galgas, config);
+    var dExt      = computeRollDiameter(grosorMm, L || 0, dInt || 0, k || 1);
     return Object.assign({}, combo, {
-      cP:            cP,
-      aR:            aR,
-      score:         score,
+      cP:             cP,
+      aR:             aR,
+      score:          score,
       maxGaugeLayers: gz.maxCount,
+      dExt:           dExt,
     });
   }
 
   /* T-11: CSV */
 
   function combinationsToCSV(combinations) {
-    var lines = ['cP,aR,a,b,c,d,e,f,g'];
+    var lines = ['cP,aR,a,b,c,d,e,f,g,dExt'];
     combinations.forEach(function (r) {
-      lines.push([r.cP, r.aR, r.a, r.b, r.c, r.d, r.e, r.f, r.g].join(','));
+      var dExtStr = (r.dExt != null) ? r.dExt.toFixed(1) : '';
+      lines.push([r.cP, r.aR, r.a, r.b, r.c, r.d, r.e, r.f, r.g, dExtStr].join(','));
     });
     return lines.join('\n');
   }
@@ -445,9 +526,21 @@
   /* T-13: Objeto global APP */
 
   var APP = {
-    form: { cP: '', aR: '', galgas: '', cintaAutocierre: 'sin' },
+    form: {
+      anchoBolsa:       0,
+      largoBolsa:       0,
+      unidadesPorRollo: 0,
+      orientacion:      'ancho',
+      cintaAutocierre:  'sin',
+      galgas:           0,
+      aR:               0,
+      tipoInterior:     'core',
+      diametroInterior: 76,
+      maquinaId:        null,
+    },
     config: Object.assign({}, DEFAULT_CONFIG),
-    configOpen: false,
+    configOpen:    false,
+    configTab:     'cinta', // 'cinta' | 'maquinas'
 
     results: null,
     qualityFilter: null,
@@ -472,54 +565,76 @@
       if (stored) {
         var parsed = JSON.parse(stored);
         APP.config = Object.assign({}, DEFAULT_CONFIG, parsed);
+        // Migración silenciosa: configs antiguas sin maquinas
+        if (!APP.config.maquinas || APP.config.maquinas.length === 0) {
+          APP.config.maquinas = DEFAULT_CONFIG.maquinas.slice();
+          APP.config.maquinaActivaId = DEFAULT_CONFIG.maquinaActivaId;
+        }
       }
     } catch (e) { /* ignorar */ }
+    // Sincronizar maquinaId del form con el activo
+    APP.form.maquinaId = APP.config.maquinaActivaId;
+    // Si modo fantasma, sincronizar diámetro con la máquina activa
+    if (APP.form.tipoInterior === 'fantasma') {
+      var m = getActiveMachine(APP.config, APP.form.maquinaId);
+      if (m) APP.form.diametroInterior = m.diametroPinza;
+    }
   }
 
   function saveConfig(cfg) {
+    // Asegurar que maquinas siempre existe
+    if (!cfg.maquinas || cfg.maquinas.length === 0) {
+      cfg.maquinas = DEFAULT_CONFIG.maquinas.slice();
+    }
     APP.config = Object.assign({}, cfg);
     try { localStorage.setItem('easyfold_config', JSON.stringify(cfg)); } catch (e) {}
+    // Propagar cambio de máquina activa al form si está en modo fantasma
+    APP.form.maquinaId = APP.config.maquinaActivaId;
+    if (APP.form.tipoInterior === 'fantasma') {
+      var m = getActiveMachine(APP.config, APP.form.maquinaId);
+      if (m) APP.form.diametroInterior = m.diametroPinza;
+    }
   }
 
   /* T-14: Motor de cálculo del cliente */
 
   function runCalculation(page) {
-    var cP = parseInt(APP.form.cP, 10);
-    var aR = parseInt(APP.form.aR, 10);
-
-    var v = validateInputs(cP, aR);
+    var v = validateForm(APP.form, APP.config);
     if (!v.ok) {
       APP.error = v.error;
       render();
       return;
     }
+
+    var derived = deriveRollInputs(APP.form);
+    var cP = derived.cP;
+    var L  = derived.L;
+    var aR = derived.aR;
+    var galgas = Number(APP.form.galgas) || 0;
+    var config = (APP.form.cintaAutocierre === 'con') ? APP.config : null;
+    var machine = getActiveMachine(APP.config, APP.form.maquinaId);
+    var k    = machine ? machine.factorCompactacion : 1;
+    var dInt = resolveInnerDiameter(APP.form, APP.config);
+
     APP.error   = null;
     APP.loading = true;
     render();
 
-    // Diferir para que el spinner se pinte antes de que el cálculo bloquee
     setTimeout(function () {
-      var galgas  = parseInt(APP.form.galgas, 10) || 0;
-      var config  = null;
-      if (APP.form.cintaAutocierre === 'con') {
-        config = APP.config;
-      }
-
       var combos = calculateCombinations(cP, aR);
       var enriched = combos.map(function (c) {
-        return enrichCombination(c, aR, galgas, config);
+        return enrichCombination(c, aR, galgas, config, L, dInt, k);
       });
       enriched.sort(function (a, b) { return b.score - a.score; });
 
-      // availableGaugeLayers: sobre subconjunto filtrado por calidad
+      // availableGaugeLayers sobre subconjunto filtrado por calidad
       var forGauge = APP.qualityFilter
         ? enriched.filter(function (r) { return getQualityLevel(r.score).key === APP.qualityFilter; })
         : enriched;
       var glSet = {};
       forGauge.forEach(function (r) { glSet[r.maxGaugeLayers] = true; });
-      var availableGaugeLayers = Object.keys(glSet).map(Number).sort(function (a,b){return a-b;});
+      var availableGaugeLayers = Object.keys(glSet).map(Number).sort(function (a, b) { return a - b; });
 
-      // Aplicar filtros
       var filtered = enriched;
       if (APP.qualityFilter) {
         filtered = filtered.filter(function (r) {
@@ -540,19 +655,22 @@
       var pageCombos = filtered.slice(start, start + pageSize);
 
       APP.results = {
-        totalCount:          filtered.length,
-        page:                safePage,
-        pageSize:            pageSize,
-        totalPages:          totalPages,
-        combinations:        pageCombos,
+        totalCount:           filtered.length,
+        page:                 safePage,
+        pageSize:             pageSize,
+        totalPages:           totalPages,
+        combinations:         pageCombos,
         availableGaugeLayers: availableGaugeLayers,
-        cP:                  cP,
-        aR:                  aR,
-        galgas:              galgas,
-        config:              config,
-        allEnriched:         enriched, // guardamos todo para CSV
+        cP:                   cP,
+        aR:                   aR,
+        galgas:               galgas,
+        config:               config,
+        L:                    L,
+        dInt:                 dInt,
+        k:                    k,
+        allEnriched:          enriched,
       };
-      APP.loading = false;
+      APP.loading           = false;
       APP.lockedKey         = null;
       APP.lockedCombination = null;
       render();
@@ -601,55 +719,121 @@
 
   /* T-16: Formulario */
 
-  function renderForm() {
-    var f    = APP.form;
-    var html = '<h2 class="text-lg font-semibold text-slate-700 mb-4">Parámetros de cálculo</h2>'
-      + '<form id="calc-form" class="space-y-4">'
-      + '<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">'
+  var INP = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
+  var INP_SM = 'w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
+  var LBL = 'block text-sm font-medium text-slate-700 mb-1';
 
-      // cP
-      + '<div>'
-      + '<label class="block text-sm font-medium text-slate-700 mb-1">cP <span class="text-slate-400 font-normal">— cantidad a plegar</span></label>'
-      + '<input id="inp-cP" type="number" min="1" step="1" value="' + esc(f.cP) + '" placeholder="ej. 65"'
-      + ' class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
-      + '<p class="text-xs text-slate-400 mt-1">Suma total que deben alcanzar las 7 variables.</p>'
+  function numInp(id, val, extra) {
+    return '<input id="' + id + '" type="number" min="0" step="1" value="' + (val || '') + '" ' + (extra || '') + ' class="' + INP + '" />';
+  }
+
+  function renderForm() {
+    var f       = APP.form;
+    var derived = deriveRollInputs(f);
+    var maquinas = APP.config.maquinas || [];
+    var machActiva = getActiveMachine(APP.config, f.maquinaId);
+    var dIntEff = (f.tipoInterior === 'fantasma' && machActiva) ? machActiva.diametroPinza : Number(f.diametroInterior) || 0;
+
+    // ---- Sección Bolsa ----
+    var html = '<h2 class="text-lg font-semibold text-slate-700 mb-4">Parámetros de cálculo</h2>'
+      + '<form id="calc-form" class="space-y-5">'
+
+      + '<div class="border border-slate-200 rounded-lg p-4 space-y-4">'
+      + '<p class="text-sm font-semibold text-slate-600">Bolsa</p>'
+      + '<div class="grid grid-cols-2 sm:grid-cols-3 gap-4">'
+
+      // Ancho
+      + '<div><label class="' + LBL + '">Ancho (mm)</label>'
+      + numInp('inp-ancho', f.anchoBolsa, 'placeholder="ej. 300"')
       + '</div>'
+
+      // Largo
+      + '<div><label class="' + LBL + '">Largo (mm)</label>'
+      + numInp('inp-largo', f.largoBolsa, 'placeholder="ej. 500"')
+      + '</div>'
+
+      // Galga
+      + '<div><label class="' + LBL + '">Galga (µm)</label>'
+      + numInp('inp-galgas', f.galgas || '', 'placeholder="ej. 200"')
+      + '<p class="text-xs text-slate-400 mt-1">1 galga = 0.25 µm</p>'
+      + '</div>'
+
+      // Unidades por rollo
+      + '<div><label class="' + LBL + '">Unidades / rollo</label>'
+      + numInp('inp-unidades', f.unidadesPorRollo, 'placeholder="ej. 200"')
+      + '</div>'
+
+      // Orientación
+      + '<div><label class="' + LBL + '">Orientación de plegado</label>'
+      + '<select id="inp-orientacion" class="' + INP + '">'
+      + '<option value="ancho"' + (f.orientacion === 'ancho' ? ' selected' : '') + '>Plegar por ancho → cP = largo</option>'
+      + '<option value="largo"' + (f.orientacion === 'largo' ? ' selected' : '') + '>Plegar por largo → cP = ancho</option>'
+      + '</select></div>'
+
+      // Cinta autocierre
+      + '<div><label class="' + LBL + '">Cinta Autocierre</label>'
+      + '<select id="inp-cinta" class="' + INP + '">'
+      + '<option value="sin"' + (f.cintaAutocierre === 'sin' ? ' selected' : '') + '>Sin cinta</option>'
+      + '<option value="con"' + (f.cintaAutocierre === 'con' ? ' selected' : '') + '>Con cinta</option>'
+      + '</select>'
+      + (f.cintaAutocierre === 'con' ? '<p class="text-xs text-blue-600 mt-1">Parámetros desde config (⚙).</p>' : '')
+      + '</div>'
+
+      + '</div></div>' // end bolsa grid+border
+
+      // ---- Sección Rollo ----
+      + '<div class="border border-slate-200 rounded-lg p-4 space-y-4">'
+      + '<p class="text-sm font-semibold text-slate-600">Rollo</p>'
+      + '<div class="grid grid-cols-2 sm:grid-cols-3 gap-4">'
 
       // aR
-      + '<div>'
-      + '<label class="block text-sm font-medium text-slate-700 mb-1">aR <span class="text-slate-400 font-normal">— altura de rollo</span></label>'
-      + '<input id="inp-aR" type="number" min="1" step="1" value="' + esc(f.aR) + '" placeholder="ej. 17"'
-      + ' class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
-      + '<p class="text-xs text-slate-400 mt-1">Valor fijo de <code>a</code> y cota máxima de todas las variables.</p>'
+      + '<div><label class="' + LBL + '">Altura del rollo — aR (mm)</label>'
+      + numInp('inp-aR', f.aR || '', 'placeholder="ej. 150"')
+      + '<p class="text-xs text-slate-400 mt-1">Valor fijo de la capa a.</p>'
       + '</div>'
 
-      // Material (galgas + cinta)
-      + '</div>'
-      + '<div class="border border-slate-200 rounded-lg p-4 space-y-3">'
-      + '<p class="text-sm font-medium text-slate-600">Material</p>'
-      + '<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">'
+      // Tipo interior
+      + '<div><label class="' + LBL + '">Tipo de interior</label>'
+      + '<div class="flex gap-2 mt-1">'
+      + '<button type="button" data-tipo="core" class="flex-1 py-2 rounded-lg border text-sm font-medium transition-colors '
+      + (f.tipoInterior === 'core' ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:border-blue-400') + '">Core</button>'
+      + '<button type="button" data-tipo="fantasma" class="flex-1 py-2 rounded-lg border text-sm font-medium transition-colors '
+      + (f.tipoInterior === 'fantasma' ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:border-blue-400') + '">Fantasma</button>'
+      + '</div></div>'
 
-      // galgas
-      + '<div>'
-      + '<label class="block text-sm font-medium text-slate-700 mb-1">Grosor de lámina (galgas)</label>'
-      + '<input id="inp-galgas" type="number" min="1" step="1" value="' + esc(f.galgas) + '" placeholder="µm"'
-      + ' class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
-      + '<p class="text-xs text-slate-400 mt-1">1 galga = 1 µm. Solo informativo.</p>'
-      + '</div>'
-
-      // cinta autocierre
-      + '<div>'
-      + '<label class="block text-sm font-medium text-slate-700 mb-1">Cinta Autocierre</label>'
-      + '<select id="inp-cinta" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">'
-      + '<option value="sin"' + (f.cintaAutocierre === 'sin' ? ' selected' : '') + '>Sin Cinta Autocierre</option>'
-      + '<option value="con"' + (f.cintaAutocierre === 'con' ? ' selected' : '') + '>Con Cinta Autocierre</option>'
-      + '</select>'
-      + (f.cintaAutocierre === 'con'
-        ? '<p class="text-xs text-blue-600 mt-1">Los parámetros de cinta provienen de la configuración global (⚙).</p>'
-        : '')
+      // Diámetro interior
+      + '<div><label class="' + LBL + '">Diámetro interior (mm)'
+      + (f.tipoInterior === 'fantasma' ? ' <span class="text-xs font-normal text-slate-400">(de la máquina)</span>' : '')
+      + '</label>'
+      + '<input id="inp-dint" type="number" min="0" step="0.1" value="' + dIntEff + '"'
+      + (f.tipoInterior === 'fantasma' ? ' disabled' : '')
+      + ' class="' + INP + (f.tipoInterior === 'fantasma' ? ' opacity-60 cursor-not-allowed' : '') + '" />'
       + '</div>'
 
-      + '</div></div>' // end material grid + border
+      // Máquina
+      + '<div class="sm:col-span-2"><label class="' + LBL + '">Máquina</label>'
+      + '<div class="flex gap-2">'
+      + '<select id="inp-maquina" class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">';
+
+    maquinas.forEach(function (m) {
+      html += '<option value="' + esc(m.id) + '"' + (f.maquinaId === m.id ? ' selected' : '') + '>' + esc(m.nombre)
+        + ' (pinza ' + m.diametroPinza + ' mm)' + '</option>';
+    });
+
+    html += '</select>'
+      + '<button type="button" id="btn-cfg-maquinas" class="shrink-0 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-500 hover:bg-slate-50 transition-colors">⚙ Conf.</button>'
+      + '</div></div>'
+
+      + '</div></div>' // end rollo grid+border
+
+      // ---- Derivados visibles ----
+      + '<div class="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-500 tabular">'
+      + '<span class="font-semibold text-slate-700">cP</span> (a plegar): '
+      + '<span class="font-mono text-slate-800">' + (derived.cP || '—') + ' mm</span>'
+      + '&nbsp;&nbsp;·&nbsp;&nbsp;'
+      + '<span class="font-semibold text-slate-700">L</span> (a enrollar): '
+      + '<span class="font-mono text-slate-800">' + (derived.L || '—') + ' mm</span>'
+      + '</div>'
 
       // Error
       + (APP.error
@@ -658,115 +842,287 @@
 
       // Botón
       + '<div>'
-      + '<button type="submit" id="btn-calc"'
-      + (APP.loading ? ' disabled' : '')
+      + '<button type="submit" id="btn-calc"' + (APP.loading ? ' disabled' : '')
       + ' class="inline-flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white px-5 py-2.5 text-sm font-medium transition-colors">'
       + (APP.loading ? spinnerSVG('w-4 h-4 text-white') + ' Calculando…' : 'Calcular combinaciones')
-      + '</button>'
-      + '</div>'
-
+      + '</button></div>'
       + '</form>';
 
     document.getElementById('section-form').innerHTML = html;
 
-    // Bind eventos
+    // ---- Bind de eventos del formulario ----
+    function syncDerivedDisplay() {
+      var d = deriveRollInputs(APP.form);
+      var el = document.querySelector('[data-derived]');
+      // (actualización inline sin re-render completo — el render lo hace el submit)
+    }
+
     document.getElementById('calc-form').addEventListener('submit', function (e) {
       e.preventDefault();
-      APP.form.cP   = document.getElementById('inp-cP').value.trim();
-      APP.form.aR   = document.getElementById('inp-aR').value.trim();
-      APP.form.galgas = document.getElementById('inp-galgas').value.trim();
-      APP.form.cintaAutocierre = document.getElementById('inp-cinta').value;
       APP.qualityFilter    = null;
       APP.gaugeLayerFilter = null;
       runCalculation(1);
     });
-    document.getElementById('inp-cP').addEventListener('input', function () {
-      APP.form.cP = this.value;
+
+    // Campos numéricos directos
+    var numFields = {
+      'inp-ancho':    'anchoBolsa',
+      'inp-largo':    'largoBolsa',
+      'inp-galgas':   'galgas',
+      'inp-unidades': 'unidadesPorRollo',
+      'inp-aR':       'aR',
+    };
+    Object.keys(numFields).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', function () {
+        APP.form[numFields[id]] = Number(this.value) || 0;
+        renderForm(); // re-render para actualizar derivados
+      });
     });
-    document.getElementById('inp-aR').addEventListener('input', function () {
-      APP.form.aR = this.value;
+
+    // Diámetro interior (solo editable en modo core)
+    var dIntEl = document.getElementById('inp-dint');
+    if (dIntEl && f.tipoInterior === 'core') {
+      dIntEl.addEventListener('input', function () {
+        APP.form.diametroInterior = Number(this.value) || 0;
+      });
+    }
+
+    // Orientación
+    document.getElementById('inp-orientacion').addEventListener('change', function () {
+      APP.form.orientacion = this.value;
+      renderForm();
     });
-    document.getElementById('inp-galgas').addEventListener('input', function () {
-      APP.form.galgas = this.value;
-    });
+
+    // Cinta
     document.getElementById('inp-cinta').addEventListener('change', function () {
       APP.form.cintaAutocierre = this.value;
       renderForm();
     });
+
+    // Tipo de interior (botones Core / Fantasma)
+    document.querySelectorAll('[data-tipo]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        APP.form.tipoInterior = this.dataset.tipo;
+        if (APP.form.tipoInterior === 'fantasma') {
+          var m = getActiveMachine(APP.config, APP.form.maquinaId);
+          if (m) APP.form.diametroInterior = m.diametroPinza;
+        }
+        renderForm();
+      });
+    });
+
+    // Máquina selector
+    var mqEl = document.getElementById('inp-maquina');
+    if (mqEl) {
+      mqEl.addEventListener('change', function () {
+        APP.form.maquinaId = this.value;
+        if (APP.form.tipoInterior === 'fantasma') {
+          var m = getActiveMachine(APP.config, APP.form.maquinaId);
+          if (m) APP.form.diametroInterior = m.diametroPinza;
+        }
+        renderForm();
+      });
+    }
+
+    // Botón configurar máquinas
+    var btnCfgMq = document.getElementById('btn-cfg-maquinas');
+    if (btnCfgMq) {
+      btnCfgMq.addEventListener('click', function () {
+        APP.configOpen = true;
+        APP.configTab  = 'maquinas';
+        renderConfigModal();
+      });
+    }
   }
 
-  /* T-17: Modal de configuración */
+  /* T-17: Modal de configuración con tabs */
 
   function renderConfigModal() {
     var modal = document.getElementById('modal-config');
-    if (!APP.configOpen) {
-      modal.classList.add('hidden');
-      return;
-    }
+    if (!APP.configOpen) { modal.classList.add('hidden'); return; }
     modal.classList.remove('hidden');
-    var c = APP.config;
+
+    var c    = APP.config;
+    var tab  = APP.configTab || 'cinta';
+    var mqs  = (c.maquinas || []).slice();
     var panel = modal.querySelector('.relative');
-    panel.innerHTML = '<h2 class="text-lg font-semibold text-slate-700 mb-4">Configuración</h2>'
-      + '<form id="config-form" class="space-y-4">'
 
-      + '<div class="border border-slate-200 rounded-lg p-4 space-y-3">'
-      + '<p class="text-sm font-medium text-slate-600">Cinta Autocierre</p>'
+    // Ampliar el modal para que quepa el CRUD de máquinas
+    panel.className = 'relative bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 p-6 z-10 max-h-[90vh] overflow-y-auto';
 
-      + '<div>'
-      + '<label class="block text-xs font-medium text-slate-600 mb-1">Plegado de cinta</label>'
-      + '<input type="number" id="cfg-plegado" min="0" step="1" value="' + c.plegadoCinta + '"'
-      + ' class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
-      + '</div>'
+    // Tabs
+    var tabBtn = function (id, label) {
+      var active = tab === id;
+      return '<button type="button" data-tab="' + id + '" class="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors '
+        + (active ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700') + '">' + label + '</button>';
+    };
 
-      + '<div>'
-      + '<label class="block text-xs font-medium text-slate-600 mb-1">Ancho de cinta</label>'
-      + '<input type="number" id="cfg-ancho" min="0" step="1" value="' + c.anchoCinta + '"'
-      + ' class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
-      + '</div>'
+    var html = '<h2 class="text-lg font-semibold text-slate-700 mb-3">Configuración</h2>'
+      + '<div class="flex gap-1 border-b border-slate-200 mb-4">'
+      + tabBtn('cinta', 'Cinta Autocierre')
+      + tabBtn('maquinas', 'Máquinas')
+      + '</div>';
 
-      + '<div>'
-      + '<label class="block text-xs font-medium text-slate-600 mb-1">Galga de cinta (µm)</label>'
-      + '<input type="number" id="cfg-galga" min="0" step="1" value="' + c.galgasCinta + '"'
-      + ' class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
-      + '</div>'
-      + '</div>'
+    // ---- Tab Cinta ----
+    if (tab === 'cinta') {
+      html += '<form id="config-form" class="space-y-4">'
+        + '<div class="border border-slate-200 rounded-lg p-4 space-y-3">'
+        + '<p class="text-sm font-medium text-slate-600">Cinta Autocierre</p>'
+        + '<div><label class="block text-xs font-medium text-slate-600 mb-1">Plegado de cinta</label>'
+        + '<input type="number" id="cfg-plegado" min="0" step="1" value="' + c.plegadoCinta + '" class="' + INP_SM + '"/></div>'
+        + '<div><label class="block text-xs font-medium text-slate-600 mb-1">Ancho de cinta</label>'
+        + '<input type="number" id="cfg-ancho" min="0" step="1" value="' + c.anchoCinta + '" class="' + INP_SM + '"/></div>'
+        + '<div><label class="block text-xs font-medium text-slate-600 mb-1">Galga de cinta (µm)</label>'
+        + '<input type="number" id="cfg-galga" min="0" step="1" value="' + c.galgasCinta + '" class="' + INP_SM + '"/></div>'
+        + '</div>'
+        + '<div class="border border-slate-200 rounded-lg p-4 space-y-3">'
+        + '<p class="text-sm font-medium text-slate-600">General</p>'
+        + '<div><label class="block text-xs font-medium text-slate-600 mb-1">Distancia de seguridad</label>'
+        + '<input type="number" id="cfg-dist" min="0" step="0.5" value="' + c.distanciaSeguridad + '" class="' + INP_SM + '"/></div>'
+        + '</div>'
+        + '<div class="flex justify-end gap-3 pt-2">'
+        + '<button type="button" id="cfg-cancel" class="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition-colors">Cancelar</button>'
+        + '<button type="submit" class="rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-sm font-medium transition-colors">Guardar</button>'
+        + '</div></form>';
+    }
 
-      + '<div class="border border-slate-200 rounded-lg p-4 space-y-3">'
-      + '<p class="text-sm font-medium text-slate-600">General</p>'
-      + '<div>'
-      + '<label class="block text-xs font-medium text-slate-600 mb-1">Distancia de seguridad</label>'
-      + '<input type="number" id="cfg-dist" min="0" step="0.5" value="' + c.distanciaSeguridad + '"'
-      + ' class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />'
-      + '</div>'
-      + '</div>'
-
-      + '<div class="flex justify-end gap-3 pt-2">'
-      + '<button type="button" id="cfg-cancel"'
-      + ' class="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition-colors">Cancelar</button>'
-      + '<button type="submit"'
-      + ' class="rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-sm font-medium transition-colors">Guardar</button>'
-      + '</div>'
-      + '</form>';
-
-    document.getElementById('cfg-cancel').addEventListener('click', function () {
-      APP.configOpen = false;
-      renderConfigModal();
-    });
-    document.getElementById('modal-overlay').addEventListener('click', function () {
-      APP.configOpen = false;
-      renderConfigModal();
-    });
-    document.getElementById('config-form').addEventListener('submit', function (e) {
-      e.preventDefault();
-      saveConfig({
-        plegadoCinta:       parseInt(document.getElementById('cfg-plegado').value, 10) || 0,
-        anchoCinta:         parseInt(document.getElementById('cfg-ancho').value, 10)   || 0,
-        galgasCinta:        parseInt(document.getElementById('cfg-galga').value, 10)   || 0,
-        distanciaSeguridad: parseFloat(document.getElementById('cfg-dist').value)      || 0,
+    // ---- Tab Máquinas ----
+    if (tab === 'maquinas') {
+      html += '<div class="space-y-3" id="maquinas-container">';
+      mqs.forEach(function (m, idx) {
+        var isActiva = m.id === c.maquinaActivaId;
+        html += '<div class="border rounded-lg p-3 space-y-2 ' + (isActiva ? 'border-blue-400 bg-blue-50' : 'border-slate-200') + '" data-mq-idx="' + idx + '">'
+          + '<div class="flex items-center justify-between gap-2">'
+          + '<label class="flex items-center gap-2 cursor-pointer">'
+          + '<input type="radio" name="mq-activa" value="' + esc(m.id) + '"' + (isActiva ? ' checked' : '') + ' class="accent-blue-600" />'
+          + '<span class="text-xs font-semibold text-slate-600">Activa</span></label>'
+          + (mqs.length > 1
+            ? '<button type="button" data-del-mq="' + idx + '" class="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors">Eliminar</button>'
+            : '<span class="text-xs text-slate-300">única</span>')
+          + '</div>'
+          + '<div class="grid grid-cols-2 gap-2">'
+          + '<div><label class="block text-xs text-slate-500 mb-1">Nombre</label>'
+          + '<input data-mq-field="nombre" type="text" value="' + esc(m.nombre) + '" class="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" /></div>'
+          + '<div><label class="block text-xs text-slate-500 mb-1">Diámetro pinza (mm)</label>'
+          + '<input data-mq-field="diametroPinza" type="number" min="0.1" step="0.1" value="' + m.diametroPinza + '" class="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" /></div>'
+          + '<div><label class="block text-xs text-slate-500 mb-1">Factor compactación</label>'
+          + '<input data-mq-field="factorCompactacion" type="number" min="0.1" step="0.01" value="' + m.factorCompactacion + '" class="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" /></div>'
+          + '</div></div>';
       });
-      APP.configOpen = false;
-      renderConfigModal();
+      html += '</div>'
+        + '<div id="mq-error" class="hidden mt-2 text-xs text-red-600"></div>'
+        + '<div class="flex justify-between items-center mt-4 pt-3 border-t border-slate-200">'
+        + '<button type="button" id="btn-add-mq" class="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 transition-colors">+ Añadir máquina</button>'
+        + '<div class="flex gap-3">'
+        + '<button type="button" id="cfg-cancel" class="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition-colors">Cancelar</button>'
+        + '<button type="button" id="btn-save-mqs" class="rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-sm font-medium transition-colors">Guardar</button>'
+        + '</div></div>';
+    }
+
+    panel.innerHTML = html;
+
+    // ---- Eventos comunes ----
+    document.getElementById('modal-overlay').addEventListener('click', function () {
+      APP.configOpen = false; renderConfigModal();
     });
+    document.getElementById('cfg-cancel').addEventListener('click', function () {
+      APP.configOpen = false; renderConfigModal();
+    });
+
+    // Cambio de tab
+    panel.querySelectorAll('[data-tab]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        APP.configTab = this.dataset.tab;
+        renderConfigModal();
+      });
+    });
+
+    // ---- Eventos tab Cinta ----
+    if (tab === 'cinta') {
+      document.getElementById('config-form').addEventListener('submit', function (e) {
+        e.preventDefault();
+        saveConfig(Object.assign({}, APP.config, {
+          plegadoCinta:       parseInt(document.getElementById('cfg-plegado').value, 10) || 0,
+          anchoCinta:         parseInt(document.getElementById('cfg-ancho').value, 10)   || 0,
+          galgasCinta:        parseInt(document.getElementById('cfg-galga').value, 10)   || 0,
+          distanciaSeguridad: parseFloat(document.getElementById('cfg-dist').value)      || 0,
+        }));
+        APP.configOpen = false;
+        renderConfigModal();
+        renderForm();
+      });
+    }
+
+    // ---- Eventos tab Máquinas ----
+    if (tab === 'maquinas') {
+      // Añadir máquina
+      document.getElementById('btn-add-mq').addEventListener('click', function () {
+        // Primero leer el estado actual del DOM
+        var updated = readMaquinasFromDOM();
+        if (!updated) return;
+        updated.push({ id: 'maquina-' + Date.now(), nombre: 'Nueva máquina', diametroPinza: 40, factorCompactacion: 1.0 });
+        var newCfg = Object.assign({}, APP.config, { maquinas: updated });
+        saveConfig(newCfg);
+        renderConfigModal();
+        renderForm();
+      });
+
+      // Eliminar máquina
+      panel.querySelectorAll('[data-del-mq]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var idx = parseInt(this.dataset.delMq, 10);
+          var updated = readMaquinasFromDOM();
+          if (!updated) return;
+          updated.splice(idx, 1);
+          var newActiva = updated.find(function (m) { return m.id === APP.config.maquinaActivaId; })
+            ? APP.config.maquinaActivaId
+            : updated[0].id;
+          var newCfg = Object.assign({}, APP.config, { maquinas: updated, maquinaActivaId: newActiva });
+          saveConfig(newCfg);
+          renderConfigModal();
+          renderForm();
+        });
+      });
+
+      // Guardar máquinas
+      document.getElementById('btn-save-mqs').addEventListener('click', function () {
+        var updated = readMaquinasFromDOM();
+        if (!updated) return;
+        // Leer máquina activa
+        var activaEl = panel.querySelector('input[name="mq-activa"]:checked');
+        var activaId = activaEl ? activaEl.value : (updated[0] ? updated[0].id : '');
+        var newCfg = Object.assign({}, APP.config, { maquinas: updated, maquinaActivaId: activaId });
+        saveConfig(newCfg);
+        APP.configOpen = false;
+        renderConfigModal();
+        renderForm();
+      });
+    }
+  }
+
+  // Lee el estado actual del DOM de máquinas y valida
+  function readMaquinasFromDOM() {
+    var errEl = document.getElementById('mq-error');
+    var rows  = document.querySelectorAll('[data-mq-idx]');
+    var result = [];
+    var hasError = false;
+    rows.forEach(function (row) {
+      var idx    = parseInt(row.dataset.mqIdx, 10);
+      var nombre = row.querySelector('[data-mq-field="nombre"]').value.trim();
+      var pinza  = parseFloat(row.querySelector('[data-mq-field="diametroPinza"]').value);
+      var factor = parseFloat(row.querySelector('[data-mq-field="factorCompactacion"]').value);
+      if (!nombre || !(pinza > 0) || !(factor > 0)) hasError = true;
+      var existingId = (APP.config.maquinas[idx] || {}).id || ('maquina-' + Date.now() + '-' + idx);
+      result.push({ id: existingId, nombre: nombre, diametroPinza: pinza, factorCompactacion: factor });
+    });
+    if (hasError) {
+      if (errEl) { errEl.textContent = 'Todos los campos son obligatorios y deben ser mayores que 0.'; errEl.classList.remove('hidden'); }
+      return null;
+    }
+    if (errEl) errEl.classList.add('hidden');
+    return result;
   }
 
   /* T-18: Barra de resumen + CSV */
@@ -777,7 +1133,7 @@
       + '<p class="text-sm text-slate-700">'
       + (R.totalCount === 0
         ? 'No se encontraron combinaciones válidas para estos parámetros.'
-        : '<span class="font-semibold">' + fmtNum(R.totalCount) + '</span> combinaciones válidas para cP=' + R.cP + ', aR=' + R.aR)
+        : '<span class="font-semibold">' + fmtNum(R.totalCount) + '</span> combinaciones — cP=' + R.cP + ' · aR=' + R.aR + ' · L=' + (R.L || '—') + ' mm · Øint=' + (R.dInt > 0 ? Number(R.dInt).toFixed(1) : '—') + ' mm')
       + '</p>'
 
       + '<button id="btn-csv" '
@@ -858,8 +1214,8 @@
 
     var pageStart = (R.page - 1) * R.pageSize;
 
-    var cols = ['#','cP','aR','a','b','c','d','e','f','g','Cal.'];
-    var widths = ['w-[5%]','w-[7%]','w-[7%]','w-[6%]','w-[6%]','w-[6%]','w-[6%]','w-[6%]','w-[6%]','w-[6%]','w-[23%]'];
+    var cols   = ['#','cP','aR','a','b','c','d','e','f','g','Ø Ext','Cal.'];
+    var widths = ['w-[4%]','w-[6%]','w-[6%]','w-[5%]','w-[5%]','w-[5%]','w-[5%]','w-[5%]','w-[5%]','w-[5%]','w-[10%]','w-[19%]'];
 
     var html = '<div class="overflow-x-auto"><table class="w-full table-fixed text-xs">';
 
@@ -907,6 +1263,10 @@
         html += '<td class="px-2 py-2 tabular ' + cls + '">' + val + '</td>';
       });
 
+      // Ø Ext
+      var dExtVal = (row.dExt != null && row.dExt > 0) ? row.dExt.toFixed(1) : '—';
+      html += '<td class="px-2 py-2 tabular ' + (isLocked ? 'text-white' : 'text-slate-700') + '">' + dExtVal + '</td>';
+
       // Cal.
       var badgeStyle = 'background:' + ql.bg + ';color:' + ql.color;
       html += '<td class="px-2 py-2">'
@@ -925,7 +1285,7 @@
       // Panel inline si está bloqueado
       if (isLocked) {
         html += '<tr data-panel-key="' + key + '">'
-          + '<td colspan="11" class="p-0">'
+          + '<td colspan="12" class="p-0">'
           + '<div id="panel-grid-' + key + '" class="panel-grid closed">'
           + '<div class="panel-inner">'
           + '<div id="panel-content-' + key + '" class="p-4">'
@@ -1835,6 +2195,41 @@
     // T-09 getQualityLevel
     assert(getQualityLevel(0.95).key === 'excelente',  'getQualityLevel(0.95) = excelente');
     assert(getQualityLevel(0.10).key === 'deficiente', 'getQualityLevel(0.10) = deficiente');
+
+    // --- Nuevas funciones de dominio ---
+
+    // galgaToMm
+    assert(Math.abs(galgaToMm(200) - 0.05) < 1e-10, 'galga 200 → 0.05 mm');
+    assert(Math.abs(galgaToMm(400) - 0.1)  < 1e-10, 'galga 400 → 0.1 mm');
+
+    // deriveRollInputs
+    (function () {
+      var f1 = { anchoBolsa: 300, largoBolsa: 500, unidadesPorRollo: 200, orientacion: 'ancho', aR: 100 };
+      var r1 = deriveRollInputs(f1);
+      assert(r1.cP === 500 && r1.L === 60000 && r1.aR === 100, 'orientación ancho: cP=largo, L=ancho*u');
+      var f2 = Object.assign({}, f1, { orientacion: 'largo' });
+      var r2 = deriveRollInputs(f2);
+      assert(r2.cP === 300 && r2.L === 100000, 'orientación largo: cP=ancho, L=largo*u');
+    })();
+
+    // computeRollDiameter — casos degenerados y caso conocido
+    assert(computeRollDiameter(0, 1000, 76, 1) === 76, 'grosor 0 → dExt = dInt');
+    assert(computeRollDiameter(0.05, 0, 76, 1) === 76, 'L 0 → dExt = dInt');
+    (function () {
+      // L=10000mm, grosor=0.05mm, dInt=76mm, k=1
+      // área = 4·10000·0.05 = 2000, dExt² = 5776 + 2000/π ≈ 6412.62 → dExt ≈ 80.08
+      var d = computeRollDiameter(0.05, 10000, 76, 1);
+      assert(Math.abs(d - 80.08) < 0.1, 'cálculo dExt ejemplo: ' + d.toFixed(3));
+    })();
+
+    // resolveInnerDiameter
+    (function () {
+      var cfg  = { maquinas: [{ id: 'm1', diametroPinza: 40 }], maquinaActivaId: 'm1' };
+      var fCore = { tipoInterior: 'core',     diametroInterior: 76,  maquinaId: 'm1' };
+      var fFant = { tipoInterior: 'fantasma', diametroInterior: 999, maquinaId: 'm1' };
+      assert(resolveInnerDiameter(fCore, cfg) === 76, 'core usa diametroInterior');
+      assert(resolveInnerDiameter(fFant, cfg) === 40, 'fantasma usa diametroPinza');
+    })();
 
     if (ok) {
       console.log('%c✓ Todos los tests pasaron', 'color:green;font-weight:bold;font-size:14px');
