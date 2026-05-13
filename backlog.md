@@ -385,89 +385,57 @@ T-36 → T-37 → T-38 → T-39 → T-40 → T-41  (revisión 3D)
 
 ### Fase 9 — Navegación y pantalla de inicio
 
-### T-46 · Estado de modo en APP
-- [ ] Añadir `APP.modo: null | 'iterativo' | 'manual'` (inicialmente `null`).
-- [ ] `APP.modo = null` → muestra la pantalla de selección.
-- [ ] Modificar el arranque en `INIT`: si `APP.modo === null`, `render()` llama a `renderLanding()` en lugar de `renderForm()`.
-- [ ] Al seleccionar modo: `APP.modo = 'iterativo'` o `'manual'`, `render()`.
-- [ ] Botón "Cambiar modo" en la cabecera → `APP.modo = null`, limpia `APP.results` y `APP.lockedKey`, `render()`.
-- [ ] Verificación: navegar entre modos limpia el estado correctamente.
+### T-46 · Estado de modo en APP ✅
+- [x] `APP.modo: null | 'iterativo' | 'manual'` añadido; `render()` ramifica según modo.
+- [x] Badge en cabecera con listener que vuelve a landing y limpia estado.
 
-### T-47 · Pantalla de selección (`renderLanding`)
-- [ ] Implementar `renderLanding()` que inyecta en `#section-form` (y oculta `#section-results`).
-- [ ] Layout: título "¿Qué quieres calcular?", dos tarjetas en grid 2 columnas (`sm:grid-cols-2`).
-- [ ] **Tarjeta Calculador Iterativo**: icono de lista, título, descripción ("Introduce las dimensiones de la bolsa y el sistema genera todas las combinaciones válidas ordenadas por calidad"), botón "Usar Calculador Iterativo".
-- [ ] **Tarjeta Calculador Manual**: icono de capas, título, descripción ("Introduce el valor de cada capa directamente y visualiza la caracterización en 3D"), botón "Usar Calculador Manual".
-- [ ] Ambas tarjetas con borde, hover con sombra, diseño homogéneo con el resto de la UI (bg-white, rounded-xl, border-slate-200).
-- [ ] Verificación: al abrir la app (sin haber elegido modo) se ve la landing. Al elegir un modo, se muestra el formulario correspondiente.
+### T-47 · Pantalla de selección (`renderLanding`) ✅
+- [x] Dos tarjetas grandes con hover, descripción y botón de acción.
+- [x] `#section-form` sin card styling en landing; `#section-results` oculto.
 
-### T-48 · Indicador de modo en cabecera
-- [ ] Si `APP.modo !== null`, mostrar junto al botón ⚙ un badge con el modo activo: "Iterativo" (azul) o "Manual" (índigo).
-- [ ] El badge actúa también como botón para volver a la landing (`APP.modo = null`, limpia estado).
-- [ ] Verificación: el badge aparece y desaparece según el modo; hacer click vuelve a la landing.
+### T-48 · Indicador de modo en cabecera ✅
+- [x] Badge dinámico (azul=iterativo, índigo=manual) que vuelve a la landing al hacer click.
 
 ---
 
 ### Fase 10 — Formulario y lógica del Calculador Manual
 
-### T-49 · Campos del formulario manual en `APP.form`
-- [ ] Añadir a `APP.form`:
-  ```js
-  // Capas manuales (mm, paso 0.5)
-  capaA: 0, capaB: 0, capaC: 0, capaD: 0, capaE: 0, capaF: 0, capaG: 0,
-  // Longitud de lámina para dExt (en modo manual, se introduce directamente)
-  longitudLamina: 0,  // mm
-  ```
-- [ ] Los campos de material (galgas, cintaAutocierre, diámetroInterior, tipoInterior, maquinaId) son compartidos con el iterativo — ya existen en `APP.form`.
+### T-49 · Campos del formulario manual en `APP.form` ✅
+- [x] `capaA–capaG` (string vacío por defecto) y `longitudLamina` añadidos a `APP.form`.
 
-### T-50 · `isManualFormComplete(form)`
-- [ ] Función pura que devuelve `true` cuando: `capaA > 0` y `capaB`, `capaC`, `capaD`, `capaE`, `capaF`, `capaG` son todos números finitos ≥ 0.
-- [ ] Devuelve `false` si cualquiera de los 7 campos es vacío, `NaN`, `null` o negativo.
-- [ ] Verificación en tests: `isManualFormComplete({capaA:17, capaB:16, capaC:16, capaD:0, capaE:0, capaF:0, capaG:0, ...})` → `true`.
+### T-50 · `isManualFormComplete(form)` ✅
+- [x] Devuelve `true` cuando los 7 campos son numéricos, ≥ 0 y `capaA > 0`.
 
-### T-51 · `buildManualCombo(form)`
-- [ ] Función pura que construye el objeto `Combination` desde el form manual:
-  ```js
-  { a: form.capaA, b: form.capaB, c: form.capaC, d: form.capaD,
-    e: form.capaE, f: form.capaF, g: form.capaG }
-  ```
-- [ ] `aR` se deriva de `form.capaA` (a siempre = aR).
+### T-51 · `buildManualCombo(form)` ✅
+- [x] Construye `{a,b,c,d,e,f,g}` directamente desde `form.capaX`.
 
-### T-52 · `detectConstraintViolations(combo)`
-- [ ] Función que devuelve un array de strings con las restricciones violadas. Sin bloquear el cálculo.
-- [ ] Restricciones comprobadas: `c ≤ b`, `e ≤ d`, `g ≤ f`, continuidad (cero seguido de no-cero), simetría D (d>0 → c=b), simetría F (f>0 → e=d), todos múltiplos de 0.5, todas ≤ a.
-- [ ] Si el array está vacío, la combinación es válida dentro del modelo de plegado.
-- [ ] Las advertencias se muestran debajo del formulario en amarillo (no bloquean el resultado).
+### T-52 · `detectConstraintViolations(combo)` ✅
+- [x] Detecta: cota superior, c≤b, e≤d, g≤f, continuidad, simetría D/F, múltiplos de 0.5.
+- [x] Devuelve array de strings. Vacío = combinación válida.
 
-### T-53 · `renderFormManual`
-- [ ] Formulario con dos secciones: **Capas** y **Material** (igual que el iterativo).
-- [ ] **Sección Capas**: 7 inputs en grid (`a`, `b`, `c`, `d`, `e`, `f`, `g`). Cada input: `type="number"`, `min="0"`, `step="0.5"`, valor inicial vacío.
-  - La capa `a` tiene etiqueta especial: "Capa a — altura del rollo (mm)" en azul, igual que la columna `a` en la tabla.
-  - Hint debajo de cada capa: "a=aR, siempre" para `a`; "0 si no hay más capas" para las demás.
-- [ ] **Campo L (longitud de lámina)**: `type="number"`, min=0, `placeholder="mm totales a enrollar"`. Sección separada o dentro de Material.
-- [ ] **Sección Material**: galgas, cintaAutocierre, diámetroInterior, tipoInterior, maquinaId — idéntica al iterativo (reutilizar el mismo código de renderizado o extraer helper).
-- [ ] Bajo el form, mostrar:
-  - Si `isManualFormComplete`: derivados en pequeño (aR, cP=suma de capas, L).
-  - Si hay violaciones: panel amarillo con la lista de advertencias.
-  - Si no completo: texto sutil "Rellena todas las capas para ver la caracterización."
-- [ ] Todos los inputs disparan `renderFormManual()` en `input` para actualizar derivados y advertencias en tiempo real (sin re-render de toda la página — usar `renderResultsManual()` en el área de resultados).
-- [ ] Verificación: al ir rellenando campos, los derivados y advertencias aparecen en tiempo real.
+### T-53 · `renderFormManual` ✅
+- [x] Sección Capas: 7 inputs coloreados, capa A en azul.
+- [x] Sección Material: galgas, cinta, L, tipo interior, diámetro, máquina.
+- [x] Derivados en tiempo real (aR, cP, L) cuando el form está completo.
+- [x] Actualizaciones en tiempo real: cada campo dispara `renderFormManual` + `renderResultsManual`.
 
-### T-54 · `computeManualResult(form, config)`
-- [ ] Si `!isManualFormComplete(form)` → devuelve `null`.
-- [ ] Construye el combo con `buildManualCombo(form)`.
-- [ ] `aR = form.capaA`, `galgas = form.galgas`, `config = cintaAutocierre === 'con' ? APP.config : null`.
-- [ ] `machine = getActiveMachine(config, form.maquinaId)`, `k = machine ? machine.factorCompactacion : 1`.
-- [ ] `dInt = resolveInnerDiameter(form, APP.config)`.
-- [ ] `L = Number(form.longitudLamina) || 0`.
-- [ ] Llama a `enrichCombination(combo, aR, galgas, config, L, dInt, k)` → devuelve un único `CombinationRow`.
-- [ ] Devuelve `{ row: CombinationRow, violations: detectConstraintViolations(combo) }`.
+### T-54 · `computeManualResult(form, config)` ✅
+- [x] Retorna `null` si form incompleto.
+- [x] Llama a `enrichCombination` con todos los parámetros (aR, galgas, config, L, dInt, k).
+- [x] Incluye `violations` en el resultado.
 
 ---
 
 ### Fase 11 — Resultados del Calculador Manual
 
-### T-55 · `renderResultsManual`
+### T-55 · `renderResultsManual` ✅
+- [x] Oculta resultados si form incompleto.
+- [x] Muestra advertencias en amber si hay violaciones.
+- [x] Barra de resumen con calidad, score y dExt.
+- [x] Tabla de una fila reutilizando las mismas 12 columnas del iterativo.
+- [x] Panel inline con las 3 visualizaciones, idéntico al iterativo.
+
+### T-56 · Integración en `render()` ✅
 - [ ] Función que renderiza el área de resultados (`#section-results`) en modo manual.
 - [ ] Si `!isManualFormComplete(APP.form)`:
   - Ocultar `#section-results`.
@@ -480,35 +448,27 @@ T-36 → T-37 → T-38 → T-39 → T-40 → T-41  (revisión 3D)
 - [ ] Reutilizar `buildInlinePanelHTML`, `bindResultsEvents` (click en fila), `handleRowClick`, `mountViewers`.
 - [ ] Verificación: al completar los 7 campos, la fila aparece; al vaciar cualquier campo, la fila desaparece.
 
-### T-56 · Integración en `render()`
-- [ ] Modificar `render()` para ramificar según `APP.modo`:
-  ```
-  modo === null       → renderLanding()
-  modo === 'iterativo' → renderForm() + resultados iterativos (lógica actual)
-  modo === 'manual'   → renderFormManual() + renderResultsManual()
-  ```
-- [ ] El `render()` del modo manual llama a `renderResultsManual()` después de `renderFormManual()`, pasando el resultado de `computeManualResult(APP.form, APP.config)`.
-- [ ] El panel inline (animación, 3D viewers, dispose) funciona igual en ambos modos sin cambios.
-- [ ] Verificación: cambiar capas en modo manual actualiza la fila en tiempo real; click abre el panel con las 3 visualizaciones; Escape cierra.
+### T-56 · Integración en `render()` ✅
+- [x] `render()` ramifica: landing / iterativo / manual.
+- [x] `findCombinationByKey` resuelve en modo manual desde `computeManualResult`.
+- [x] `handleRowClick` / `closePanel` funcionan igual en ambos modos.
 
-### T-57 · Tests del Calculador Manual
-- [ ] Añadir al bloque `runTests()`:
-  - `isManualFormComplete`: caso completo, caso con `capaA=0`, caso con campo vacío.
-  - `buildManualCombo`: verifica que a=capaA, b=capaB, etc.
-  - `detectConstraintViolations`: caso sin violaciones, caso con c>b, caso con cero seguido de no-cero.
-  - `computeManualResult` con combinación conocida: verifica que `row.score` es número en [0,1] y `row.dExt ≥ dInt`.
-- [ ] Verificación: consola muestra "✓ Todos los tests pasaron" con los nuevos casos.
+### T-57 · Tests del Calculador Manual ✅
+- [x] `isManualFormComplete`: completo, capaA=0, campo vacío, valor negativo.
+- [x] `buildManualCombo`: verifica a=capaA … g=capaG.
+- [x] `detectConstraintViolations`: sin violaciones, c>b, cero+no-cero, simetría D.
+- [x] `computeManualResult`: score∈[0,1], dExt≥dInt, form incompleto→null.
 
-### T-58 · Smoke test manual del Calculador Manual
+### T-58 · Smoke test manual ⬜ *(pendiente — manual)*
 - [ ] Abrir la app → aparece la landing con las dos tarjetas grandes.
 - [ ] Elegir "Calculador Manual" → aparece el formulario de capas.
 - [ ] Rellenar solo algunas capas → no aparece ninguna fila en resultados.
-- [ ] Rellenar todas las capas (ej. a=17, b=16, c=16, d=0, e=0, f=0, g=0, galgas=200) → aparece una fila con score, calidad y dExt.
+- [ ] Rellenar todas las capas (a=17, b=16, c=16, d=0, e=0, f=0, g=0, galgas=200) → fila con score, calidad y dExt.
 - [ ] Modificar una capa → la fila se actualiza en tiempo real.
-- [ ] Introducir c>b → aparece advertencia amarilla pero la fila sigue visible.
+- [ ] Introducir c>b → advertencia amarilla visible, fila sigue mostrándose.
 - [ ] Click en la fila → panel inline con sección transversal, análisis de gramaje y vista 3D.
 - [ ] Escape cierra el panel.
-- [ ] Cambiar modo (badge en cabecera) → vuelve a la landing; elegir iterativo → formulario iterativo intacto.
+- [ ] Badge en cabecera → vuelve a la landing; elegir iterativo → formulario iterativo intacto.
 - [ ] Consola sin errores JS.
 
 ---

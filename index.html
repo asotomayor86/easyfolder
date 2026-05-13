@@ -33,15 +33,18 @@
         <h1 class="text-2xl font-bold text-slate-800 leading-none">easyFold</h1>
         <p class="text-xs text-slate-500 mt-0.5">Calculador de combinaciones de plegado — uso interno</p>
       </div>
-      <button id="btn-config"
-        class="p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors"
-        title="Configuración">
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round"
-            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      </button>
+      <div class="flex items-center gap-2">
+        <button id="badge-modo" class="hidden rounded-full px-3 py-1 text-xs font-semibold transition-colors" title="Cambiar modo"></button>
+        <button id="btn-config"
+          class="p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+          title="Configuración">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round"
+              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+      </div>
     </div>
   </header>
 
@@ -49,7 +52,7 @@
   <main id="main" class="max-w-7xl mx-auto px-4 py-8 space-y-6">
 
     <!-- SECCIÓN FORMULARIO -->
-    <section id="section-form" class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+    <section id="section-form">
       <!-- Renderizado por renderForm() -->
     </section>
 
@@ -165,6 +168,79 @@
         || list.find(function (m) { return m.id === config.maquinaActivaId; })
         || list[0]
         || null;
+  }
+
+  /* Sprint 2 — Calculador Manual: funciones puras */
+
+  // T-50: comprueba que los 7 campos de capa están rellenos y son válidos
+  function isManualFormComplete(form) {
+    var fields = ['capaA','capaB','capaC','capaD','capaE','capaF','capaG'];
+    for (var i = 0; i < fields.length; i++) {
+      var raw = form[fields[i]];
+      if (raw === '' || raw === null || raw === undefined) return false;
+      var v = Number(raw);
+      if (!isFinite(v) || v < 0) return false;
+    }
+    return Number(form.capaA) > 0;
+  }
+
+  // T-51: construye la Combination desde el form manual
+  function buildManualCombo(form) {
+    return {
+      a: Number(form.capaA) || 0,
+      b: Number(form.capaB) || 0,
+      c: Number(form.capaC) || 0,
+      d: Number(form.capaD) || 0,
+      e: Number(form.capaE) || 0,
+      f: Number(form.capaF) || 0,
+      g: Number(form.capaG) || 0,
+    };
+  }
+
+  // T-52: detecta restricciones violadas (informativo, no bloquea)
+  function detectConstraintViolations(combo) {
+    var w  = [];
+    var aR = combo.a;
+    var keys = ['b','c','d','e','f','g'];
+    // Cota superior
+    keys.forEach(function (k) {
+      if (combo[k] > aR) w.push(k + ' (' + combo[k] + ') supera aR (' + aR + ')');
+    });
+    // Orden por pares
+    if (combo.c > combo.b) w.push('c (' + combo.c + ') > b (' + combo.b + ')');
+    if (combo.e > combo.d) w.push('e (' + combo.e + ') > d (' + combo.d + ')');
+    if (combo.g > combo.f) w.push('g (' + combo.g + ') > f (' + combo.f + ')');
+    // Continuidad
+    var seenZero = false;
+    keys.forEach(function (k) {
+      if (seenZero && combo[k] > 0) w.push('cero seguido de no-cero en ' + k);
+      if (combo[k] === 0) seenZero = true;
+    });
+    // Simetría D: d>0 → c=b
+    if (combo.d > 0 && combo.c !== combo.b) w.push('d > 0 pero c ≠ b (simetría D)');
+    // Simetría F: f>0 → e=d
+    if (combo.f > 0 && combo.e !== combo.d) w.push('f > 0 pero e ≠ d (simetría F)');
+    // Múltiplos de 0.5
+    ['a','b','c','d','e','f','g'].forEach(function (k) {
+      if (combo[k] % 0.5 !== 0) w.push(k + ' (' + combo[k] + ') no es múltiplo de 0.5');
+    });
+    return w;
+  }
+
+  // T-54: calcula el resultado enriquecido para el modo manual
+  function computeManualResult(form, config) {
+    if (!isManualFormComplete(form)) return null;
+    var combo    = buildManualCombo(form);
+    var aR       = combo.a;
+    var galgas   = Number(form.galgas) || 0;
+    var cintaCfg = (form.cintaAutocierre === 'con') ? config : null;
+    var machine  = getActiveMachine(config, form.maquinaId);
+    var k        = machine ? machine.factorCompactacion : 1;
+    var dInt     = resolveInnerDiameter(form, config);
+    var L        = Number(form.longitudLamina) || 0;
+    var row      = enrichCombination(combo, aR, galgas, cintaCfg, L, dInt, k);
+    var violations = detectConstraintViolations(combo);
+    return { row: row, violations: violations };
   }
 
   /* T-04: Validación */
@@ -526,17 +602,24 @@
   /* T-13: Objeto global APP */
 
   var APP = {
+    modo: null, // null = landing | 'iterativo' | 'manual'
+
     form: {
+      // Campos compartidos (iterativo + manual)
+      cintaAutocierre:  'sin',
+      galgas:           0,
+      tipoInterior:     'core',
+      diametroInterior: 76,
+      maquinaId:        null,
+      // Campos exclusivos del Calculador Iterativo
       anchoBolsa:       0,
       largoBolsa:       0,
       unidadesPorRollo: 0,
       orientacion:      'ancho',
-      cintaAutocierre:  'sin',
-      galgas:           0,
       aR:               0,
-      tipoInterior:     'core',
-      diametroInterior: 76,
-      maquinaId:        null,
+      // Campos exclusivos del Calculador Manual
+      capaA: '', capaB: '', capaC: '', capaD: '', capaE: '', capaF: '', capaG: '',
+      longitudLamina:   0,
     },
     config: Object.assign({}, DEFAULT_CONFIG),
     configOpen:    false,
@@ -1552,56 +1635,419 @@
     return html;
   }
 
+  /* ---- Sprint 2: funciones de render para modo manual y landing ---- */
+
+  /* T-48: actualiza el badge de modo en la cabecera */
+  function renderHeader() {
+    var badge = document.getElementById('badge-modo');
+    if (!badge) return;
+    if (APP.modo === null) {
+      badge.classList.add('hidden');
+    } else {
+      badge.classList.remove('hidden');
+      var isIter = APP.modo === 'iterativo';
+      badge.textContent = (isIter ? '⬅ Iterativo' : '⬅ Manual');
+      badge.className   = 'rounded-full px-3 py-1 text-xs font-semibold transition-colors cursor-pointer '
+        + (isIter ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200');
+    }
+  }
+
+  /* T-47: pantalla de selección de modo */
+  function renderLanding() {
+    var sec = document.getElementById('section-form');
+    sec.className = ''; // sin card styling en landing
+
+    var card = function (icon, title, desc, modo, color) {
+      return '<button data-select-modo="' + modo + '" class="text-left w-full rounded-2xl border-2 p-8 transition-all duration-200 '
+        + 'bg-white hover:shadow-xl hover:-translate-y-1 hover:border-' + color + '-400 border-slate-200 focus:outline-none focus:ring-4 focus:ring-' + color + '-100">'
+        + '<div class="text-4xl mb-4">' + icon + '</div>'
+        + '<h3 class="text-xl font-bold text-slate-800 mb-2">' + title + '</h3>'
+        + '<p class="text-sm text-slate-500 leading-relaxed">' + desc + '</p>'
+        + '<div class="mt-6 inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold bg-' + color + '-600 text-white">'
+        + 'Usar ' + title
+        + '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>'
+        + '</div>'
+        + '</button>';
+    };
+
+    sec.innerHTML = '<div class="py-6">'
+      + '<h2 class="text-2xl font-bold text-slate-800 text-center mb-2">¿Qué quieres calcular?</h2>'
+      + '<p class="text-sm text-slate-500 text-center mb-10">Elige el modo de trabajo para esta sesión.</p>'
+      + '<div class="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-3xl mx-auto">'
+      + card('🔁', 'Calculador Iterativo',
+          'Introduce las dimensiones de la bolsa y el sistema genera automáticamente todas las combinaciones de plegado válidas, ordenadas por calidad.',
+          'iterativo', 'blue')
+      + card('✏️', 'Calculador Manual',
+          'Define el valor de cada capa directamente y visualiza la caracterización en tiempo real: score, calidad, diámetro exterior y modelos 3D.',
+          'manual', 'indigo')
+      + '</div></div>';
+
+    document.getElementById('section-results').classList.add('hidden');
+
+    sec.querySelectorAll('[data-select-modo]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        APP.modo    = this.dataset.selectModo;
+        APP.results = null;
+        APP.lockedKey = null;
+        APP.lockedCombination = null;
+        disposeAllViewers();
+        render();
+      });
+    });
+  }
+
+  /* T-53: formulario del Calculador Manual */
+  function renderFormManual() {
+    var sec = document.getElementById('section-form');
+    sec.className = 'bg-white rounded-xl border border-slate-200 shadow-sm p-6';
+
+    var f       = APP.form;
+    var maquinas = APP.config.maquinas || [];
+    var machActiva = getActiveMachine(APP.config, f.maquinaId);
+    var dIntEff  = (f.tipoInterior === 'fantasma' && machActiva) ? machActiva.diametroPinza : (Number(f.diametroInterior) || 76);
+
+    // Capa input helper
+    var capaColors = ['blue','orange','green','violet','red','teal','yellow'];
+    var capaColorClasses = [
+      'border-blue-400 focus:ring-blue-300',
+      'border-orange-400 focus:ring-orange-300',
+      'border-green-400 focus:ring-green-300',
+      'border-violet-400 focus:ring-violet-300',
+      'border-red-400 focus:ring-red-300',
+      'border-teal-400 focus:ring-teal-300',
+      'border-yellow-400 focus:ring-yellow-300',
+    ];
+    var capaKeys  = ['capaA','capaB','capaC','capaD','capaE','capaF','capaG'];
+    var capaLabels = ['a','b','c','d','e','f','g'];
+
+    var capaInput = function (i) {
+      var key = capaKeys[i];
+      var lbl = capaLabels[i];
+      var val = f[key];
+      var isA = (i === 0);
+      return '<div>'
+        + '<label class="block text-sm font-semibold mb-1 ' + (isA ? 'text-blue-700' : 'text-slate-600') + '">'
+        + 'Capa ' + lbl.toUpperCase() + (isA ? ' <span class="text-xs font-normal">(= aR)</span>' : '') + '</label>'
+        + '<input data-capa="' + key + '" type="number" min="0" step="0.5" value="' + (val === '' ? '' : val) + '"'
+        + ' placeholder="0"'
+        + ' class="w-full rounded-lg border-2 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 ' + capaColorClasses[i] + '">'
+        + '</div>';
+    };
+
+    var html = '<h2 class="text-lg font-semibold text-slate-700 mb-4">Calculador Manual</h2>'
+
+      // Sección Capas
+      + '<div class="border border-slate-200 rounded-lg p-4 mb-4">'
+      + '<p class="text-sm font-semibold text-slate-600 mb-3">Capas (mm)</p>'
+      + '<div class="grid grid-cols-4 sm:grid-cols-7 gap-3">';
+
+    for (var i = 0; i < 7; i++) html += capaInput(i);
+
+    html += '</div></div>'
+
+      // Sección Material (compartida)
+      + '<div class="border border-slate-200 rounded-lg p-4 mb-4">'
+      + '<p class="text-sm font-semibold text-slate-600 mb-3">Material</p>'
+      + '<div class="grid grid-cols-2 sm:grid-cols-3 gap-4">'
+
+      + '<div><label class="' + LBL + '">Galga (µm)</label>'
+      + '<input id="manu-galgas" type="number" min="0" step="1" value="' + (f.galgas || '') + '" placeholder="ej. 200" class="' + INP + '"></div>'
+
+      + '<div><label class="' + LBL + '">Cinta Autocierre</label>'
+      + '<select id="manu-cinta" class="' + INP + '">'
+      + '<option value="sin"' + (f.cintaAutocierre === 'sin' ? ' selected' : '') + '>Sin cinta</option>'
+      + '<option value="con"' + (f.cintaAutocierre === 'con' ? ' selected' : '') + '>Con cinta</option>'
+      + '</select>'
+      + (f.cintaAutocierre === 'con' ? '<p class="text-xs text-blue-600 mt-1">Parámetros desde config (⚙).</p>' : '')
+      + '</div>'
+
+      + '<div><label class="' + LBL + '">Longitud de lámina — L (mm)</label>'
+      + '<input id="manu-L" type="number" min="0" step="1" value="' + (f.longitudLamina || '') + '" placeholder="mm totales" class="' + INP + '"></div>'
+
+      + '</div></div>'
+
+      // Sección Rollo
+      + '<div class="border border-slate-200 rounded-lg p-4 mb-4">'
+      + '<p class="text-sm font-semibold text-slate-600 mb-3">Rollo</p>'
+      + '<div class="grid grid-cols-2 sm:grid-cols-3 gap-4">'
+
+      + '<div><label class="' + LBL + '">Tipo de interior</label>'
+      + '<div class="flex gap-2 mt-1">'
+      + '<button type="button" data-manu-tipo="core" class="flex-1 py-2 rounded-lg border text-sm font-medium transition-colors '
+      + (f.tipoInterior === 'core' ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:border-blue-400') + '">Core</button>'
+      + '<button type="button" data-manu-tipo="fantasma" class="flex-1 py-2 rounded-lg border text-sm font-medium transition-colors '
+      + (f.tipoInterior === 'fantasma' ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:border-blue-400') + '">Fantasma</button>'
+      + '</div></div>'
+
+      + '<div><label class="' + LBL + '">Diámetro interior (mm)'
+      + (f.tipoInterior === 'fantasma' ? ' <span class="text-xs font-normal text-slate-400">(de la máquina)</span>' : '') + '</label>'
+      + '<input id="manu-dint" type="number" min="0" step="0.1" value="' + dIntEff + '"'
+      + (f.tipoInterior === 'fantasma' ? ' disabled' : '')
+      + ' class="' + INP + (f.tipoInterior === 'fantasma' ? ' opacity-60 cursor-not-allowed' : '') + '"></div>'
+
+      + '<div class="sm:col-span-1"><label class="' + LBL + '">Máquina</label>'
+      + '<div class="flex gap-2">'
+      + '<select id="manu-maquina" class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">';
+
+    (APP.config.maquinas || []).forEach(function (m) {
+      html += '<option value="' + esc(m.id) + '"' + (f.maquinaId === m.id ? ' selected' : '') + '>' + esc(m.nombre) + '</option>';
+    });
+
+    html += '</select>'
+      + '<button type="button" id="manu-cfg-mq" class="shrink-0 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-500 hover:bg-slate-50">⚙</button>'
+      + '</div></div>'
+      + '</div></div>';
+
+    // Derivados
+    var complete = isManualFormComplete(f);
+    if (complete) {
+      var combo = buildManualCombo(f);
+      var cP    = combo.a + combo.b + combo.c + combo.d + combo.e + combo.f + combo.g;
+      html += '<div class="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-500 tabular">'
+        + '<span class="font-semibold text-slate-700">aR</span>: ' + combo.a + ' mm'
+        + '&nbsp;&nbsp;·&nbsp;&nbsp;'
+        + '<span class="font-semibold text-slate-700">cP</span>: ' + cP + ' mm'
+        + '&nbsp;&nbsp;·&nbsp;&nbsp;'
+        + '<span class="font-semibold text-slate-700">L</span>: ' + (Number(f.longitudLamina) || '—') + ' mm'
+        + '</div>';
+    } else {
+      html += '<div class="rounded-lg bg-slate-50 border border-dashed border-slate-300 px-4 py-3 text-xs text-slate-400 text-center">'
+        + 'Rellena las 7 capas para ver la caracterización en tiempo real.'
+        + '</div>';
+    }
+
+    sec.innerHTML = html;
+
+    // ---- Bind eventos ----
+
+    // Capas (input en tiempo real)
+    sec.querySelectorAll('[data-capa]').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var key = this.dataset.capa;
+        APP.form[key] = this.value === '' ? '' : Number(this.value);
+        if (APP.lockedKey) { disposeAllViewers(); APP.lockedKey = null; APP.lockedCombination = null; }
+        renderFormManual();
+        renderResultsManual();
+      });
+    });
+
+    // Material
+    var bind = function (id, field, parse) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('input', function () {
+        APP.form[field] = parse ? parse(this.value) : this.value;
+        if (APP.lockedKey) { disposeAllViewers(); APP.lockedKey = null; APP.lockedCombination = null; }
+        renderFormManual();
+        renderResultsManual();
+      });
+    };
+    bind('manu-galgas', 'galgas', Number);
+    bind('manu-L', 'longitudLamina', Number);
+
+    var cintaEl = document.getElementById('manu-cinta');
+    if (cintaEl) cintaEl.addEventListener('change', function () {
+      APP.form.cintaAutocierre = this.value;
+      if (APP.lockedKey) { disposeAllViewers(); APP.lockedKey = null; APP.lockedCombination = null; }
+      renderFormManual(); renderResultsManual();
+    });
+
+    // Tipo interior
+    sec.querySelectorAll('[data-manu-tipo]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        APP.form.tipoInterior = this.dataset.manuTipo;
+        if (APP.form.tipoInterior === 'fantasma') {
+          var m = getActiveMachine(APP.config, APP.form.maquinaId);
+          if (m) APP.form.diametroInterior = m.diametroPinza;
+        }
+        if (APP.lockedKey) { disposeAllViewers(); APP.lockedKey = null; APP.lockedCombination = null; }
+        renderFormManual(); renderResultsManual();
+      });
+    });
+
+    var dintEl = document.getElementById('manu-dint');
+    if (dintEl && f.tipoInterior === 'core') {
+      dintEl.addEventListener('input', function () {
+        APP.form.diametroInterior = Number(this.value) || 0;
+        if (APP.lockedKey) { disposeAllViewers(); APP.lockedKey = null; APP.lockedCombination = null; }
+        renderResultsManual();
+      });
+    }
+
+    var mqEl = document.getElementById('manu-maquina');
+    if (mqEl) mqEl.addEventListener('change', function () {
+      APP.form.maquinaId = this.value;
+      if (APP.form.tipoInterior === 'fantasma') {
+        var m = getActiveMachine(APP.config, APP.form.maquinaId);
+        if (m) APP.form.diametroInterior = m.diametroPinza;
+      }
+      if (APP.lockedKey) { disposeAllViewers(); APP.lockedKey = null; APP.lockedCombination = null; }
+      renderFormManual(); renderResultsManual();
+    });
+
+    var cfgMqEl = document.getElementById('manu-cfg-mq');
+    if (cfgMqEl) cfgMqEl.addEventListener('click', function () {
+      APP.configOpen = true; APP.configTab = 'maquinas'; renderConfigModal();
+    });
+  }
+
+  /* T-55: resultados del Calculador Manual */
+  function renderResultsManual() {
+    var secRes = document.getElementById('section-results');
+    var result = computeManualResult(APP.form, APP.config);
+
+    if (!result) { secRes.classList.add('hidden'); return; }
+    secRes.classList.remove('hidden');
+
+    var row        = result.row;
+    var violations = result.violations;
+    var key        = rowKey(row);
+    var isLocked   = APP.lockedKey === key;
+    var ql         = getQualityLevel(row.score);
+    var dExtVal    = (row.dExt > 0) ? row.dExt.toFixed(1) : '—';
+
+    var html = '';
+
+    // Advertencias de restricciones
+    if (violations.length > 0) {
+      html += '<div class="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-800">'
+        + '<span class="font-semibold">⚠ Restricciones no cumplidas:</span> '
+        + violations.join(' · ')
+        + '</div>';
+    }
+
+    // Barra resumen
+    var badgeStyle = 'background:' + ql.bg + ';color:' + ql.color;
+    html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-wrap items-center gap-3">'
+      + '<span class="text-sm text-slate-700 font-semibold">Combinación manual</span>'
+      + '<span style="' + badgeStyle + '" class="rounded-full px-2.5 py-0.5 text-xs font-semibold">' + ql.label + '</span>'
+      + '<span class="text-xs text-slate-500 tabular">score: <b>' + Math.round(row.score * 100) + '</b></span>'
+      + '<span class="text-xs text-slate-500 tabular">aR=' + row.aR + ' · cP=' + row.cP + ' · Øext=' + dExtVal + ' mm</span>'
+      + '</div>';
+
+    // Tabla con una sola fila
+    var trClass = isLocked
+      ? 'bg-blue-800 text-white ring-1 ring-inset ring-blue-900 cursor-pointer'
+      : 'hover:bg-blue-50 cursor-pointer';
+
+    html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm">'
+      + '<div class="overflow-x-auto"><table class="w-full table-fixed text-xs">'
+      + '<thead><tr class="bg-slate-50 text-slate-500 uppercase tracking-wider text-left">'
+      + ['#','cP','aR','a','b','c','d','e','f','g','Ø Ext','Cal.'].map(function (col, i) {
+          var w = ['w-[4%]','w-[6%]','w-[6%]','w-[5%]','w-[5%]','w-[5%]','w-[5%]','w-[5%]','w-[5%]','w-[5%]','w-[10%]','w-[19%]'][i];
+          var extra = (col === 'a') ? ' text-blue-700 bg-blue-50' : '';
+          return '<th class="' + w + ' px-2 py-2 font-semibold' + extra + '">' + col + '</th>';
+        }).join('')
+      + '</tr></thead>'
+      + '<tbody>'
+      + '<tr data-key="' + key + '" class="' + trClass + ' transition-colors">'
+      + '<td class="px-2 py-2 tabular ' + (isLocked ? 'text-white' : 'text-slate-400') + '">' + (isLocked ? '📌' : '1') + '</td>';
+
+    ['cP','aR'].forEach(function (f) { html += '<td class="px-2 py-2 tabular">' + row[f] + '</td>'; });
+    html += '<td class="px-2 py-2 tabular ' + (isLocked ? '' : 'bg-blue-50 text-blue-700') + '">' + row.a + '</td>';
+    ['b','c','d','e','f','g'].forEach(function (f) {
+      var cls = (row[f] === 0) ? (isLocked ? 'text-blue-300' : 'text-slate-200') : '';
+      html += '<td class="px-2 py-2 tabular ' + cls + '">' + row[f] + '</td>';
+    });
+    html += '<td class="px-2 py-2 tabular ' + (isLocked ? 'text-white' : 'text-slate-700') + '">' + dExtVal + '</td>';
+    html += '<td class="px-2 py-2"><span class="inline-flex items-center gap-1">'
+      + '<span style="' + badgeStyle + '" class="rounded px-1.5 py-0.5 font-medium">'
+      + '<span class="sm:hidden">' + ql.short + '</span><span class="hidden sm:inline">' + ql.label + '</span></span>'
+      + '<span class="font-mono font-bold tabular ml-1 ' + (isLocked ? 'text-white' : 'text-slate-700') + '">' + Math.round(row.score * 100) + '</span>'
+      + '</span></td>';
+    html += '</tr>';
+
+    // Panel inline
+    if (isLocked) {
+      var fakeR = {
+        galgas: Number(APP.form.galgas) || 0,
+        config: (APP.form.cintaAutocierre === 'con') ? APP.config : null,
+      };
+      html += '<tr data-panel-key="' + key + '"><td colspan="12" class="p-0">'
+        + '<div id="panel-grid-' + key + '" class="panel-grid closed">'
+        + '<div class="panel-inner"><div id="panel-content-' + key + '" class="p-4">'
+        + buildInlinePanelHTML(row, fakeR)
+        + '</div></div></div></td></tr>';
+    }
+
+    html += '</tbody></table></div></div>';
+    secRes.innerHTML = html;
+
+    // Bind click en fila
+    var tr = secRes.querySelector('tr[data-key]');
+    if (tr) tr.addEventListener('click', function () { handleRowClick(key); });
+
+    // Abrir panel si ya está locked
+    if (isLocked) {
+      var gridEl = document.getElementById('panel-grid-' + key);
+      if (gridEl) {
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            gridEl.classList.remove('closed');
+            gridEl.classList.add('open');
+            var mounted = false;
+            function doMount() {
+              if (mounted) return;
+              mounted = true;
+              var fakeR2 = { galgas: Number(APP.form.galgas) || 0, config: (APP.form.cintaAutocierre === 'con') ? APP.config : null };
+              mountViewers(APP.lockedCombination, fakeR2);
+            }
+            gridEl.addEventListener('transitionend', doMount, { once: true });
+            setTimeout(doMount, 350);
+          });
+        });
+      }
+    }
+  }
+
   /* ---- Render principal ---- */
 
   /* T-30: render() */
 
   function render() {
-    // Formulario
-    renderForm();
-
-    // Modal config
+    renderHeader();
     renderConfigModal();
 
-    // Sección resultados
-    var secRes = document.getElementById('section-results');
-    if (!APP.results) {
-      secRes.classList.add('hidden');
+    // — Landing —
+    if (APP.modo === null) {
+      renderLanding();
       return;
     }
+
+    // — Calculador Manual —
+    if (APP.modo === 'manual') {
+      renderFormManual();
+      renderResultsManual();
+      return;
+    }
+
+    // — Calculador Iterativo (modo por defecto) —
+    var sec = document.getElementById('section-form');
+    sec.className = 'bg-white rounded-xl border border-slate-200 shadow-sm p-6';
+    renderForm();
+
+    var secRes = document.getElementById('section-results');
+    if (!APP.results) { secRes.classList.add('hidden'); return; }
     secRes.classList.remove('hidden');
 
-    var R = APP.results;
+    var R    = APP.results;
     var html = '';
 
-    // Barra de resumen
     html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4">'
       + renderSummaryBar() + '</div>';
 
     if (R.totalCount > 0) {
-      // Chips calidad
       var qc = renderQualityChips();
       if (qc) html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3">' + qc + '</div>';
-
-      // Chips galga
       var gc = renderGaugeChips();
       if (gc) html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3">' + gc + '</div>';
-
-      // Tabla
-      html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm">'
-        + renderTable() + '</div>';
-
-      // Paginación
+      html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm">' + renderTable() + '</div>';
       var pg = renderPagination();
       if (pg) html += '<div class="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3">' + pg + '</div>';
     }
 
     secRes.innerHTML = html;
-
-    // Bind eventos de resultados
     bindResultsEvents();
 
-    // T-36/T-42: activar panel y montar viewers tras la transición CSS
     if (APP.lockedKey) {
       var gridEl = document.getElementById('panel-grid-' + APP.lockedKey);
       if (gridEl) {
@@ -1609,15 +2055,12 @@
           requestAnimationFrame(function () {
             gridEl.classList.remove('closed');
             gridEl.classList.add('open');
-
             var mounted = false;
             function doMount() {
               if (mounted) return;
               mounted = true;
-              console.log('[3D] montando viewers — clave:', APP.lockedKey);
               mountViewers(APP.lockedCombination, APP.results);
             }
-            // Esperar transitionend; fallback de 350 ms por si no dispara
             gridEl.addEventListener('transitionend', doMount, { once: true });
             setTimeout(doMount, 350);
           });
@@ -1759,6 +2202,11 @@
   }
 
   function findCombinationByKey(key) {
+    // Modo manual: la única combinación posible
+    if (APP.modo === 'manual') {
+      var res = computeManualResult(APP.form, APP.config);
+      return (res && rowKey(res.row) === key) ? res.row : null;
+    }
     if (!APP.results) return null;
     return APP.results.combinations.find(function (r) { return rowKey(r) === key; }) || null;
   }
@@ -2231,6 +2679,60 @@
       assert(resolveInnerDiameter(fFant, cfg) === 40, 'fantasma usa diametroPinza');
     })();
 
+    // --- Sprint 2: Calculador Manual ---
+
+    // T-50: isManualFormComplete
+    (function () {
+      var full = { capaA:17, capaB:16, capaC:16, capaD:0, capaE:0, capaF:0, capaG:0 };
+      assert(isManualFormComplete(full), 'form completo → true');
+      assert(!isManualFormComplete(Object.assign({}, full, { capaA: 0  })), 'capaA=0 → false');
+      assert(!isManualFormComplete(Object.assign({}, full, { capaA: '' })), 'capaA="" → false');
+      assert(!isManualFormComplete(Object.assign({}, full, { capaB: '' })), 'capaB="" → false');
+      assert(!isManualFormComplete(Object.assign({}, full, { capaC: -1 })), 'valor negativo → false');
+    })();
+
+    // T-51: buildManualCombo
+    (function () {
+      var f = { capaA:17, capaB:16, capaC:16, capaD:0, capaE:0, capaF:0, capaG:0 };
+      var c = buildManualCombo(f);
+      assert(c.a === 17 && c.b === 16 && c.c === 16 && c.d === 0 && c.g === 0, 'buildManualCombo correcto');
+    })();
+
+    // T-52: detectConstraintViolations
+    (function () {
+      var ok1 = detectConstraintViolations({ a:17, b:16, c:16, d:0, e:0, f:0, g:0 });
+      assert(ok1.length === 0, 'combinación válida → sin violaciones');
+
+      var cv = detectConstraintViolations({ a:10, b:5, c:6, d:0, e:0, f:0, g:0 });
+      assert(cv.length > 0 && cv.some(function(w){ return w.indexOf('c') >= 0 && w.indexOf('b') >= 0; }),
+        'c>b detectado');
+
+      var cz = detectConstraintViolations({ a:10, b:0, c:5, d:0, e:0, f:0, g:0 });
+      assert(cz.some(function(w){ return w.indexOf('no-cero') >= 0; }), 'cero seguido de no-cero detectado');
+
+      var sd = detectConstraintViolations({ a:10, b:5, c:4, d:3, e:0, f:0, g:0 });
+      assert(sd.some(function(w){ return w.indexOf('simetría D') >= 0; }), 'violación simetría D detectada');
+    })();
+
+    // T-54: computeManualResult
+    (function () {
+      var cfg = Object.assign({}, DEFAULT_CONFIG);
+      var fComplete = {
+        capaA:17, capaB:16, capaC:16, capaD:0, capaE:0, capaF:0, capaG:0,
+        galgas:200, cintaAutocierre:'sin',
+        tipoInterior:'core', diametroInterior:76, maquinaId: null,
+        longitudLamina: 50000,
+      };
+      var res = computeManualResult(fComplete, cfg);
+      assert(res !== null, 'computeManualResult devuelve resultado con form completo');
+      assert(res.row.score >= 0 && res.row.score <= 1, 'score en [0,1]');
+      assert(res.row.dExt >= 76, 'dExt ≥ dInt');
+      assert(res.violations.length === 0, 'combinación válida sin violaciones');
+
+      var fEmpty = Object.assign({}, fComplete, { capaA: '' });
+      assert(computeManualResult(fEmpty, cfg) === null, 'form incompleto → null');
+    })();
+
     if (ok) {
       console.log('%c✓ Todos los tests pasaron', 'color:green;font-weight:bold;font-size:14px');
     } else {
@@ -2253,6 +2755,16 @@
 
     loadConfig();
     render();
+
+    // Badge de modo — vuelve a la landing
+    document.getElementById('badge-modo').addEventListener('click', function () {
+      disposeAllViewers();
+      APP.modo              = null;
+      APP.results           = null;
+      APP.lockedKey         = null;
+      APP.lockedCombination = null;
+      render();
+    });
 
     // Botón config
     document.getElementById('btn-config').addEventListener('click', function () {
